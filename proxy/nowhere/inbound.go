@@ -27,6 +27,7 @@ import (
 type Server struct {
 	config     *ServerConfig
 	handler    *nwserver.Handler
+	ctx        context.Context
 	tlsConfig  *tls.Config
 	morph      *morph.Keys
 	enableTCP  bool
@@ -113,6 +114,7 @@ func NewServer(ctx context.Context, config *ServerConfig) (*Server, error) {
 
 	s := &Server{
 		config:     config,
+		ctx:        ctx,
 		tlsConfig:  serverTLSConfig(certs, alpn),
 		morph:      keys,
 		enableTCP:  tcpOn,
@@ -242,7 +244,7 @@ func (s *Server) Start() error {
 	if s.listenPort == 0 {
 		return errors.New("nowhere: UDP carrier requires an inbound listen port")
 	}
-	hub, err := listenQUIC(udpListenAddr(s.listenAddr, s.listenPort), s.sockopt, s.tlsConfig, s.morph, s.handler)
+	hub, err := listenQUIC(core.ToBackgroundDetachedContext(s.ctx), udpListenAddr(s.listenAddr, s.listenPort), s.sockopt, s.tlsConfig, s.morph, s.handler)
 	if err != nil {
 		return errors.New("nowhere: failed to listen QUIC").Base(err)
 	}

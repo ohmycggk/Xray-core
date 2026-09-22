@@ -484,8 +484,8 @@ type quicHub struct {
 	addr     stdnet.Addr
 }
 
-func listenQUIC(addr *stdnet.UDPAddr, sockopt *internet.SocketConfig, tlsConfig *tls.Config, keys *morph.Keys, handler *nwserver.Handler) (*quicHub, error) {
-	pc, err := internet.ListenSystemPacket(context.Background(), addr, sockopt)
+func listenQUIC(ctx context.Context, addr *stdnet.UDPAddr, sockopt *internet.SocketConfig, tlsConfig *tls.Config, keys *morph.Keys, handler *nwserver.Handler) (*quicHub, error) {
+	pc, err := internet.ListenSystemPacket(ctx, addr, sockopt)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +499,7 @@ func listenQUIC(addr *stdnet.UDPAddr, sockopt *internet.SocketConfig, tlsConfig 
 		_ = pc.Close()
 		return nil, err
 	}
-	loopCtx, cancel := context.WithCancel(context.Background())
+	loopCtx, cancel := context.WithCancel(ctx)
 	hub := &quicHub{listener: ln, tr: tr, pc: pc, cancel: cancel, addr: ln.Addr()}
 	go func() {
 		defer cancel()
