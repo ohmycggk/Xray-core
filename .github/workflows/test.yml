@@ -94,14 +94,25 @@ jobs:
           key: xray-geodat-
           enableCrossOsArchive: true
       - name: Download Geodat if Missing
+        id: geodat-download
         shell: bash
         run: |
           [ -d 'resources' ] || mkdir resources
+          DOWNLOADED=false
           for NAME in geoip geosite; do
             if [ ! -s "resources/${NAME}.dat" ]; then
               echo "Downloading ${NAME}.dat..."
               curl -sSfL "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/${NAME}.dat" -o "resources/${NAME}.dat"
+              DOWNLOADED=true
             fi
           done
+          echo "downloaded=${DOWNLOADED}" >> "$GITHUB_OUTPUT"
+      - name: Save Geodat Cache
+        if: steps.geodat-download.outputs.downloaded == 'true' && matrix.os == 'ubuntu-latest'
+        uses: actions/cache/save@v6
+        with:
+          path: resources
+          key: xray-geodat-${{ github.sha }}-${{ github.run_number }}
+          enableCrossOsArchive: true
       - name: Test
         run: go test -timeout 1h -v ./...
