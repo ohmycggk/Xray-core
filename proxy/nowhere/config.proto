@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package xray.proxy.nowhere;
+option csharp_namespace = "Xray.Proxy.Nowhere";
+option go_package = "github.com/xtls/xray-core/proxy/nowhere";
+option java_package = "com.xray.proxy.nowhere";
+option java_multiple_files = true;
+
+// Certificate is a PEM encoded TLS certificate and private key.
+message Certificate {
+  bytes certificate = 1;
+  bytes key = 2;
+}
+
+// Endpoint is one Nowhere peer. up and down are tcp, udp, or mix.
+message Endpoint {
+  string address = 1;
+  uint32 port = 2;
+  string password = 3;
+  string up = 4;
+  string down = 5;
+  bool mux = 6;
+  bool morph = 7;
+  string server_name = 8;
+  string pin = 9;
+  bool allow_insecure = 10;
+  int32 pool = 11;
+  string alpn = 12;
+  int64 mix_fallback_ns = 13;
+}
+
+message ServerConfig {
+  string password = 1;
+  // Empty enables both tcp and udp.
+  repeated string networks = 2;
+  bool morph = 3;
+  repeated Certificate certificates = 4;
+  string alpn = 5;
+  // Next forwards flows to another Nowhere portal instead of the router.
+  Endpoint next = 6;
+  uint32 user_level = 7;
+}
+
+message ClientConfig {
+  Endpoint endpoint = 1;
+  uint32 user_level = 2;
+}
