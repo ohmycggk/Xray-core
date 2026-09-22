@@ -1,0 +1,186 @@
+name: Build Binaries and Docker Image
+
+on:
+  push:
+    branches: [feat/nowhere]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Docker image tag (optional, default: branch-sha / branch)"
+        required: false
+
+concurrency:
+  group: build-binaries-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            assetname: linux-amd64
+          - goos: linux
+            goarch: arm64
+            assetname: linux-arm64
+          - goos: windows
+            goarch: amd64
+            assetname: windows-amd64
+          - goos: darwin
+            goarch: amd64
+            assetname: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            assetname: darwin-arm64
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Get project dependencies
+        run: go mod download
+
+      - name: Build Xray
+        run: |
+          mkdir -p build_assets
+          COMMIT=$(git describe --always --dirty)
+          if [[ "$GOOS" == "windows" ]]; then
+            echo "Building Xray for Windows..."
+            go build -o build_assets/xray.exe -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags="-X github.com/xtls/xray-core/core.build=${COMMIT} -s -w -buildid=" -v ./main
+          else
+            echo "Building Xray..."
+            go build -o build_assets/xray -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags="-X github.com/xtls/xray-core/core.build=${COMMIT} -s -w -buildid=" -v ./main
+          fi
+
+      - name: Restore Geodat Cache
+        uses: actions/cache/restore@v6
+        with:
+          path: resources
+          key: xray-geodat-
+          enableCrossOsArchive: true
+
+      - name: Download Geodat if Missing
+        id: geodat-download
+        shell: bash
+        run: |
+          [ -d 'resources' ] || mkdir resources
+          DOWNLOADED=false
+          for NAME in geoip geosite; do
+            if [ ! -s "resources/${NAME}.dat" ]; then
+              echo "Downloading ${NAME}.dat..."
+              curl -sSfL "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/${NAME}.dat" -o "resources/${NAME}.dat"
+              DOWNLOADED=true
+            fi
+          done
+          echo "downloaded=${DOWNLOADED}" >> "$GITHUB_OUTPUT"
+
+      - name: Save Geodat Cache
+        if: steps.geodat-download.outputs.downloaded == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: resources
+          key: xray-geodat-${{ github.sha }}-${{ github.run_number }}-${{ matrix.assetname }}
+          enableCrossOsArchive: true
+
+      - name: Download Wintun
+        if: matrix.goos == 'windows'
+        run: |
+          curl -sSfL "https://www.wintun.net/builds/wintun-0.14.1.zip" -o wintun.zip
+          echo "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51  wintun.zip" | sha256sum -c -
+          unzip -q wintun.zip -d resources/
+
+      - name: Package
+        run: |
+          mv -f resources/geoip.dat resources/geosite.dat build_assets/
+          if [[ "$GOOS" == "windows" ]]; then
+            cp .github/build/windows/* build_assets/
+            mv resources/wintun/bin/amd64/wintun.dll build_assets/
+            mv resources/wintun/LICENSE.txt build_assets/LICENSE-Wintun
+          fi
+          cp README.md LICENSE build_assets/
+          pushd build_assets || exit 1
+          touch -mt $(date +%Y01010000) *
+          zip -9vr "../Xray-${{ matrix.assetname }}.zip" .
+          popd || exit 1
+
+      - name: Upload binaries to Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Xray-${{ matrix.assetname }}
+          path: Xray-${{ matrix.assetname }}.zip
+          compression-level: 0
+
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set repository and image name to lowercase
+        env:
+          IMAGE_NAME: "${{ github.repository }}"
+        run: |
+          echo "IMAGE_NAME=${IMAGE_NAME,,}" >>${GITHUB_ENV}
+          echo "FULL_IMAGE_NAME=ghcr.io/${IMAGE_NAME,,}" >>${GITHUB_ENV}
+
+      - name: Determine image tags
+        run: |
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          SHORTSHA="${GITHUB_SHA::7}"
+          SANITIZED_BRANCH="${GITHUB_REF_NAME//\//-}"
+          if [[ -n "$INPUT_TAG" ]]; then
+            echo "Using dispatch input tag: '${INPUT_TAG}'."
+            echo "PRIMARY_TAG=${FULL_IMAGE_NAME}:${INPUT_TAG}" >> "$GITHUB_ENV"
+            echo "IMAGE_TAGS=${FULL_IMAGE_NAME}:${INPUT_TAG}" >> "$GITHUB_ENV"
+          else
+            echo "Using branch-based tags for '${GITHUB_REF_NAME}'."
+            echo "PRIMARY_TAG=${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}-${SHORTSHA}" >> "$GITHUB_ENV"
+            echo "IMAGE_TAGS=${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}-${SHORTSHA},${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout codebase
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Dockerfile with meta-rules-dat
+        run: |
+          sed 's|Loyalsoldier/v2ray-rules-dat|MetaCubeX/meta-rules-dat|g' \
+            .github/docker/Dockerfile > .github/docker/Dockerfile.meta
+          grep -n 'meta-rules-dat' .github/docker/Dockerfile.meta
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: .github/docker/Dockerfile.meta
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          push: true
+          tags: ${{ env.IMAGE_TAGS }}
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect "${PRIMARY_TAG}"
