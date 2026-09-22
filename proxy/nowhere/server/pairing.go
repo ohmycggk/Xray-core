@@ -124,12 +124,14 @@ func (c *splicedConn) CloseRead() error {
 	})
 	return c.readErr
 }
+
 func (c *splicedConn) CloseWrite() error {
 	c.writeOnce.Do(func() {
 		c.writeErr = closeWriteSide(c.writer)
 	})
 	return c.writeErr
 }
+
 func (c *splicedConn) Close() (err error) {
 	c.once.Do(func() {
 		var errs []error
@@ -169,12 +171,14 @@ func (c *splicedConn) SetDeadline(t time.Time) error {
 	}
 	return c.SetWriteDeadline(t)
 }
+
 func (c *splicedConn) SetReadDeadline(t time.Time) error {
 	if deadline, ok := c.reader.(interface{ SetReadDeadline(time.Time) error }); ok {
 		return deadline.SetReadDeadline(t)
 	}
 	return nil
 }
+
 func (c *splicedConn) SetWriteDeadline(t time.Time) error {
 	if deadline, ok := c.writer.(interface{ SetWriteDeadline(time.Time) error }); ok {
 		return deadline.SetWriteDeadline(t)

@@ -606,5 +606,7 @@ func (s *shared) offerIncoming(stream *Stream) error {
 	}
 }
 
-var _ io.ReadWriteCloser = (*Stream)(nil)
-var _ net.Conn = (*Stream)(nil)
+var (
+	_ io.ReadWriteCloser = (*Stream)(nil)
+	_ net.Conn           = (*Stream)(nil)
+)

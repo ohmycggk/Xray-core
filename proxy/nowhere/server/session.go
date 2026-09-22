@@ -1093,10 +1093,12 @@ func (f *nowuFlow) SetDeadline(value time.Time) error {
 	f.writeDL.set(value)
 	return nil
 }
+
 func (f *nowuFlow) SetReadDeadline(value time.Time) error {
 	f.readDL.set(value)
 	return nil
 }
+
 func (f *nowuFlow) SetWriteDeadline(value time.Time) error {
 	f.writeDL.set(value)
 	return nil

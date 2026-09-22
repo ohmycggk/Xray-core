@@ -151,11 +151,13 @@ func mustIPv4(s string, port uint16) Target {
 	t, _ := NewIPTarget(addr, port)
 	return t
 }
+
 func mustIPv6(s string, port uint16) Target {
 	addr, _ := netip.ParseAddr(s)
 	t, _ := NewIPTarget(addr, port)
 	return t
 }
+
 func mustDomain(t *testing.T, host string, port uint16) Target {
 	target, err := NewDomainTarget(host, port)
 	if err != nil {

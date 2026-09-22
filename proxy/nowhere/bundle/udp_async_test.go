@@ -137,6 +137,7 @@ type recordingPacketConn struct {
 }
 
 func (c *recordingPacketConn) ReadFrom([]byte) (int, net.Addr, error) { return 0, nil, net.ErrClosed }
+
 func (c *recordingPacketConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -146,6 +147,7 @@ func (c *recordingPacketConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 	c.writes = append(c.writes, append([]byte(nil), p...))
 	return len(p), nil
 }
+
 func (c *recordingPacketConn) Close() error {
 	c.closeCount.Add(1)
 	return nil

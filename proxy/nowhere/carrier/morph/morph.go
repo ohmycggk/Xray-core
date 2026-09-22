@@ -189,5 +189,7 @@ func (c *packetConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	return len(payload), addr, nil
 }
 
-var _ net.Conn = (*tcpConn)(nil)
-var _ net.PacketConn = (*packetConn)(nil)
+var (
+	_ net.Conn       = (*tcpConn)(nil)
+	_ net.PacketConn = (*packetConn)(nil)
+)

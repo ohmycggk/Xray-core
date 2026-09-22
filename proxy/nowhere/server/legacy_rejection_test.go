@@ -208,6 +208,7 @@ func (u *legacyRejectUpstream) HandleStream(context.Context, net.Conn, net.Addr,
 	u.calls.Add(1)
 	return errors.New("unexpected legacy stream route")
 }
+
 func (u *legacyRejectUpstream) HandlePacket(context.Context, net.PacketConn, net.Addr, wire.Target, FlowReadiness) error {
 	u.calls.Add(1)
 	return errors.New("unexpected legacy packet route")
@@ -239,6 +240,7 @@ func (c *legacyQUICConn) TLSHandshakeInfo() (wire.TLSHandshakeInfo, error) {
 		TLSVersion: tls.VersionTLS13, NegotiatedALPN: wire.DefaultALPN, Exporter: c.exporter,
 	}, nil
 }
+
 func (c *legacyQUICConn) AcceptStream(ctx context.Context) (QuicStream, error) {
 	if c.accepted.CompareAndSwap(false, true) {
 		return c.first, nil
@@ -250,6 +252,7 @@ func (c *legacyQUICConn) AcceptStream(ctx context.Context) (QuicStream, error) {
 		return nil, net.ErrClosed
 	}
 }
+
 func (c *legacyQUICConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	select {
 	case data := <-c.datagrams:
@@ -269,6 +272,7 @@ func (*legacyQUICConn) LocalAddr() net.Addr                        { return &net
 func (*legacyQUICConn) RemoteAddr() net.Addr {
 	return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
 }
+
 func (c *legacyQUICConn) MarkAuthenticated() {
 	c.authOnce.Do(func() { close(c.authenticated) })
 }

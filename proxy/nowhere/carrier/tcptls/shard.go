@@ -14,8 +14,10 @@ import (
 
 // MaxMuxCarriers is the Nowhere 2 client pool cap for established or connecting
 // Mux TLS carriers in one session. Both logical directions share the pool.
-const MaxMuxCarriers = 8
-const muxDialTimeout = 15 * time.Second
+const (
+	MaxMuxCarriers = 8
+	muxDialTimeout = 15 * time.Second
+)
 
 // MuxDirection is retained for API compatibility. Nowhere 2 uses one shared
 // full-duplex Mux pool, so uplink and downlink reservations compete together.
