@@ -93,5 +93,15 @@ jobs:
           path: resources
           key: xray-geodat-
           enableCrossOsArchive: true
+      - name: Download Geodat if Missing
+        shell: bash
+        run: |
+          [ -d 'resources' ] || mkdir resources
+          for NAME in geoip geosite; do
+            if [ ! -s "resources/${NAME}.dat" ]; then
+              echo "Downloading ${NAME}.dat..."
+              curl -sSfL "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/${NAME}.dat" -o "resources/${NAME}.dat"
+            fi
+          done
       - name: Test
         run: go test -timeout 1h -v ./...

@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
   schedule:
     # Update GeoData on every day (22:30 UTC)
+    # NOTE: GitHub disables scheduled workflows on forks. To (re)bootstrap the
+    #       geodat/wintun caches there, push any change to this file (or run it
+    #       manually with workflow_dispatch if you have the rights).
     - cron: "30 22 * * *"
   push:
     # Prevent triggering update request storm
