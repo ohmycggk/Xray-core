@@ -3,6 +3,8 @@ name: Build Binaries and Docker Image
 on:
   push:
     branches: [feat/nowhere]
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -122,6 +124,53 @@ jobs:
           path: Xray-${{ matrix.assetname }}.zip
           compression-level: 0
 
+  release:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v7
+
+      - name: Determine release parameters
+        id: rel
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=Xray ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=dev-feat-nowhere" >> "$GITHUB_OUTPUT"
+            echo "name=Development Build (feat/nowhere)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or move release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${{ steps.rel.outputs.tag }}" "${GITHUB_SHA}"
+          git push -f origin "refs/tags/${{ steps.rel.outputs.tag }}"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: Xray-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Upload release assets
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.rel.outputs.tag }}
+          release_name: ${{ steps.rel.outputs.name }}
+          prerelease: ${{ steps.rel.outputs.prerelease }}
+          overwrite: true
+          file_glob: true
+          file: release-assets/*.zip
+
   docker:
     runs-on: ubuntu-latest
     permissions:
@@ -142,13 +191,17 @@ jobs:
           SANITIZED_BRANCH="${GITHUB_REF_NAME//\//-}"
           if [[ -n "$INPUT_TAG" ]]; then
             echo "Using dispatch input tag: '${INPUT_TAG}'."
-            echo "PRIMARY_TAG=${FULL_IMAGE_NAME}:${INPUT_TAG}" >> "$GITHUB_ENV"
-            echo "IMAGE_TAGS=${FULL_IMAGE_NAME}:${INPUT_TAG}" >> "$GITHUB_ENV"
+            TAGS="${FULL_IMAGE_NAME}:${INPUT_TAG}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "Using git tag: '${GITHUB_REF_NAME}'."
+            TAGS="${FULL_IMAGE_NAME}:${GITHUB_REF_NAME}"
           else
             echo "Using branch-based tags for '${GITHUB_REF_NAME}'."
-            echo "PRIMARY_TAG=${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}-${SHORTSHA}" >> "$GITHUB_ENV"
-            echo "IMAGE_TAGS=${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}-${SHORTSHA},${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}" >> "$GITHUB_ENV"
+            TAGS="${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}-${SHORTSHA},${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}"
           fi
+          TAGS="${TAGS},${FULL_IMAGE_NAME}:latest"
+          echo "IMAGE_TAGS=${TAGS}" >> "$GITHUB_ENV"
+          echo "PRIMARY_TAG=${TAGS%%,*}" >> "$GITHUB_ENV"
 
       - name: Checkout codebase
         uses: actions/checkout@v7
