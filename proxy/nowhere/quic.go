@@ -158,7 +158,7 @@ func (b *quicBackend) dialSession(ctx context.Context) (*quicSession, error) {
 		return nil, err
 	}
 	if b.morph != nil {
-		pc = morph.WrapPacketConn(pc, b.morph.UDP)
+		pc = morph.WrapPacketConn(pc, *b.morph, true)
 	}
 	tr := &quic.Transport{Conn: pc, DisableGSO: true}
 	conn, err := tr.Dial(dialCtx, raddr, b.tls.Clone(), b.qcfg)
@@ -490,7 +490,7 @@ func listenQUIC(ctx context.Context, addr *stdnet.UDPAddr, sockopt *internet.Soc
 		return nil, err
 	}
 	if keys != nil {
-		pc = morph.WrapPacketConn(pc, keys.UDP)
+		pc = morph.WrapPacketConn(pc, *keys, false)
 	}
 	tr := &quic.Transport{Conn: pc, DisableGSO: true}
 	ln, err := tr.Listen(tlsConfig, quicSettings(true, keys != nil))

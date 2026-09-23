@@ -44,6 +44,8 @@ var (
 	errReset          = errors.New("nowhere: mux flow reset")
 	errInvalidFlowID  = errors.New("nowhere: mux flow id out of range")
 	errInterrupted    = errors.New("nowhere: mux wait interrupted")
+	errUnknownFlow    = errors.New("nowhere: DATA frame for unknown mux flow")
+	errDataAfterFin   = errors.New("nowhere: DATA received after mux FIN")
 )
 
 // Config is the per-carrier Mux window and queue budget.
@@ -139,6 +141,7 @@ type flowState struct {
 	pendingReceive int
 	windowQueued   bool
 	localParts     uint8
+	localFinSent   bool
 	remoteFin      bool
 	readerClosed   bool
 }
@@ -253,9 +256,21 @@ func (h *Handle) ActiveStreams() int {
 		return 0
 	}
 	h.shared.flowsMu.Lock()
-	n := len(h.shared.flows)
+	n := activeFlowCount(h.shared.flows)
 	h.shared.flowsMu.Unlock()
 	return n
+}
+
+// CanOpenFlow reports whether this carrier may still admit flowID: it is
+// open, under the retained-state ceiling, and not already holding protocol
+// state for that ID.
+func (h *Handle) CanOpenFlow(flowID uint32) bool {
+	if h == nil || h.shared == nil || h.shared.closed.Load() {
+		return false
+	}
+	h.shared.flowsMu.Lock()
+	defer h.shared.flowsMu.Unlock()
+	return len(h.shared.flows) < h.shared.config.MaxStreams && h.shared.flows[flowID] == nil
 }
 
 // Pressure is the max occupancy of send credit, receive credit, and outbound
@@ -426,9 +441,8 @@ func (s *shared) insertFlow(flowID uint32, advertiseWindow bool) (*Stream, error
 		localParts:     2,
 	}
 	s.flows[flowID] = state
-	n := len(s.flows)
 	s.flowsMu.Unlock()
-	s.notifyActiveCount(n)
+	s.notifyActive()
 	if advertiseWindow && extra != 0 {
 		s.readyMu.Lock()
 		s.ready = append(s.ready, flowID)
@@ -436,11 +450,6 @@ func (s *shared) insertFlow(flowID uint32, advertiseWindow bool) (*Stream, error
 		s.notifyControl()
 	}
 	return newStream(s, flowID, state.inbound), nil
-}
-
-func (s *shared) notifyActiveCount(n int) {
-	_ = n
-	s.notifyActive()
 }
 
 func (s *shared) notifyActive() {
@@ -470,31 +479,65 @@ func (s *shared) removeFlow(flowID uint32) *flowState {
 	return flow
 }
 
-func (s *shared) admitReceive(flowID uint32, charge int) (chan inbound, error) {
+type receiveTarget uint8
+
+const (
+	// receiveDeliver hands the frame to a live application reader.
+	receiveDeliver receiveTarget = iota
+	// receiveDiscard drops the frame for a flow the application fully
+	// released; only connection credit is returned and the stream debit
+	// stays behind to bound the discarded bytes.
+	receiveDiscard
+	// receiveAbandoned drops the frame because the read half closed while
+	// its writer is still live; both receive windows are restored.
+	receiveAbandoned
+)
+
+func (s *shared) admitReceive(flowID uint32, charge int) (receiveTarget, chan inbound, error) {
 	s.connRecvMu.Lock()
 	s.flowsMu.Lock()
+	defer s.connRecvMu.Unlock()
+	defer s.flowsMu.Unlock()
 	flow := s.flows[flowID]
-	if flow == nil || flow.readerClosed {
-		s.flowsMu.Unlock()
-		s.connRecvMu.Unlock()
-		return nil, nil
+	if flow == nil {
+		return receiveDeliver, nil, errUnknownFlow
 	}
 	if flow.remoteFin {
-		s.flowsMu.Unlock()
-		s.connRecvMu.Unlock()
-		return nil, errors.New("nowhere: DATA received after mux FIN")
+		return receiveDeliver, nil, errDataAfterFin
 	}
 	if flow.receiveCredit < charge || s.connRecv < charge {
-		s.flowsMu.Unlock()
-		s.connRecvMu.Unlock()
-		return nil, errWindowExceeded
+		return receiveDeliver, nil, errWindowExceeded
 	}
 	flow.receiveCredit -= charge
 	s.connRecv -= charge
-	ch := flow.inbound
-	s.flowsMu.Unlock()
+	if flow.localParts == 0 {
+		return receiveDiscard, nil, nil
+	}
+	if flow.readerClosed {
+		return receiveAbandoned, nil, nil
+	}
+	return receiveDeliver, flow.inbound, nil
+}
+
+func (s *shared) releaseConnReceive(charge int) {
+	if s.closed.Load() {
+		return
+	}
+	s.connRecvMu.Lock()
+	s.connRecv += charge
+	maxConn := creditUnits(s.config.ConnectionWindowBytes)
+	if s.connRecv > maxConn {
+		s.connRecv = maxConn
+	}
 	s.connRecvMu.Unlock()
-	return ch, nil
+	previous := s.pendingConn.Add(int64(charge))
+	connThreshold := creditUnits(s.config.ConnectionWindowBytes / windowUpdateDivisor)
+	if connThreshold > 0xffff {
+		connThreshold = 0xffff
+	}
+	if previous >= int64(connThreshold) {
+		s.notifyControl()
+	}
 }
 
 func (s *shared) releaseReceive(flowID uint32, charge int) {
@@ -509,28 +552,26 @@ func (s *shared) releaseReceive(flowID uint32, charge int) {
 	}
 	s.connRecvMu.Unlock()
 
+	ready, notify := false, false
 	s.flowsMu.Lock()
 	flow := s.flows[flowID]
-	if flow == nil {
-		s.flowsMu.Unlock()
-		return
+	if flow != nil && flow.localParts != 0 {
+		flow.receiveCredit += charge
+		maxStream := creditUnits(s.config.StreamWindowBytes)
+		if flow.receiveCredit > maxStream {
+			flow.receiveCredit = maxStream
+		}
+		flow.pendingReceive += charge
+		if !flow.windowQueued {
+			flow.windowQueued = true
+			ready = true
+		}
+		threshold := creditUnits(s.config.StreamWindowBytes / windowUpdateDivisor)
+		if threshold > 0xffff {
+			threshold = 0xffff
+		}
+		notify = flow.pendingReceive >= threshold
 	}
-	flow.receiveCredit += charge
-	maxStream := creditUnits(s.config.StreamWindowBytes)
-	if flow.receiveCredit > maxStream {
-		flow.receiveCredit = maxStream
-	}
-	flow.pendingReceive += charge
-	ready := false
-	if !flow.windowQueued {
-		flow.windowQueued = true
-		ready = true
-	}
-	threshold := creditUnits(s.config.StreamWindowBytes / windowUpdateDivisor)
-	if threshold > 0xffff {
-		threshold = 0xffff
-	}
-	notify := flow.pendingReceive >= threshold
 	s.flowsMu.Unlock()
 	if ready {
 		s.readyMu.Lock()
@@ -559,15 +600,44 @@ func (s *shared) releasePart(flowID uint32) {
 		flow.localParts--
 	}
 	if flow.localParts == 0 {
-		delete(s.flows, flowID)
-		flow.sendCredit.close()
-		flow.sendSlot.close()
+		flow.pendingReceive = 0
+		flow.windowQueued = false
+		if flow.remoteFin && flow.localFinSent {
+			delete(s.flows, flowID)
+			flow.sendCredit.close()
+			flow.sendSlot.close()
+		}
 	}
 	s.flowsMu.Unlock()
 	s.notifyActive()
 	if flush {
 		s.notifyControl()
 	}
+}
+
+// finishLocalFin retires retained flow state once the local FIN frame has
+// actually been written to the carrier.
+func (s *shared) finishLocalFin(flowID uint32) {
+	s.flowsMu.Lock()
+	if flow := s.flows[flowID]; flow != nil {
+		flow.localFinSent = true
+		if flow.localParts == 0 && flow.remoteFin {
+			delete(s.flows, flowID)
+			flow.sendCredit.close()
+			flow.sendSlot.close()
+		}
+	}
+	s.flowsMu.Unlock()
+}
+
+func activeFlowCount(flows map[uint32]*flowState) int {
+	n := 0
+	for _, flow := range flows {
+		if flow.localParts != 0 {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *shared) markReaderClosed(flowID uint32) {

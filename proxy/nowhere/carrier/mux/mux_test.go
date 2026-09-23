@@ -9,6 +9,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/xtls/xray-core/proxy/nowhere/wire"
 )
 
 func startPair(t *testing.T) (*Handle, *Incoming, *Handle, *Incoming) {
@@ -320,4 +322,292 @@ func isTimeout(err error) bool {
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func readFrame(t *testing.T, r io.Reader) wire.MuxHeader {
+	t.Helper()
+	var buf [wire.MuxHeaderLen]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		t.Fatal(err)
+	}
+	header, err := wire.DecodeMuxHeader(buf[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := wire.MuxPayloadLen(header); n > 0 {
+		if _, err := io.CopyN(io.Discard, r, int64(n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return header
+}
+
+func writeFrame(t *testing.T, w io.Writer, header wire.MuxHeader, payload []byte) {
+	t.Helper()
+	encoded, err := wire.EncodeMuxHeader(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(encoded[:]); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) > 0 {
+		if _, err := w.Write(payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("condition not met before timeout")
+}
+
+// Flow-state assertions must read flowState fields while holding flowsMu,
+// so each check evaluates entirely inside the lock instead of inspecting a
+// pointer returned from it.
+func (h *Handle) hasFlow(flowID uint32) bool {
+	h.shared.flowsMu.Lock()
+	defer h.shared.flowsMu.Unlock()
+	return h.shared.flows[flowID] != nil
+}
+
+func (h *Handle) flowRetainedLocallyFinished(flowID uint32) bool {
+	h.shared.flowsMu.Lock()
+	defer h.shared.flowsMu.Unlock()
+	flow := h.shared.flows[flowID]
+	return flow != nil && flow.localFinSent && flow.localParts == 0
+}
+
+func (h *Handle) flowReceiveCredit(flowID uint32) (int, bool) {
+	h.shared.flowsMu.Lock()
+	defer h.shared.flowsMu.Unlock()
+	flow, ok := h.shared.flows[flowID]
+	if !ok {
+		return 0, false
+	}
+	return flow.receiveCredit, true
+}
+
+func (h *Handle) connRecvUnits() int {
+	h.shared.connRecvMu.Lock()
+	defer h.shared.connRecvMu.Unlock()
+	return h.shared.connRecv
+}
+
+// startRawCarrier pairs one Mux handle with a raw test peer that speaks
+// bare frames on the other pipe end.
+func startRawCarrier(t *testing.T) (*Handle, net.Conn) {
+	t.Helper()
+	left, right := net.Pipe()
+	handle, _, err := Start(left, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		handle.Close()
+		right.Close()
+	})
+	return handle, right
+}
+
+func TestUnknownFlowDataTearsDownCarrier(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	payload := []byte("bad")
+	header, err := wire.DataMuxHeader(999, len(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, header, payload)
+	waitFor(t, 2*time.Second, client.IsClosed)
+}
+
+func TestFinHalfCloseKeepsReverseDirection(t *testing.T) {
+	client, _, _, serverIn := startPair(t)
+	outgoing, err := client.OpenStream(11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := outgoing.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	if err := outgoing.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := serverIn.Accept(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := io.ReadAll(incoming)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "ping" {
+		t.Fatalf("payload = %q", payload)
+	}
+	if _, err := incoming.Write([]byte("pong")); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, 4)
+	if _, err := io.ReadFull(outgoing, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "pong" {
+		t.Fatalf("reverse data = %q", got)
+	}
+	_ = outgoing.Close()
+	_ = incoming.Close()
+}
+
+func TestAbandonedReadHalfReturnsFullCredit(t *testing.T) {
+	client, _, server, serverIn := startPair(t)
+	outgoing, err := client.OpenStream(12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	incoming, err := serverIn.Accept(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outgoing.CloseRead(); err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte{0x33}, 4096)
+	if _, err := incoming.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	maxStream := creditUnits(DefaultConfig().StreamWindowBytes)
+	waitFor(t, 2*time.Second, func() bool {
+		credit, ok := client.flowReceiveCredit(12)
+		return ok && credit == maxStream
+	})
+	if client.IsClosed() || server.IsClosed() {
+		t.Fatal("carrier closed after DATA on an abandoned read half")
+	}
+	_ = outgoing.Close()
+	_ = incoming.Close()
+}
+
+func TestDiscardedDataRetainsFlowUntilPeerFin(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	stream, err := client.OpenStream(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Skip control frames until the OPEN for flow 5 surfaces.
+	for {
+		if header := readFrame(t, raw); header.Kind == wire.MuxFrameOpen && header.FlowID == 5 {
+			break
+		}
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Drain frames until the FIN surfaces; the write only completes once
+	// the raw peer reads it.
+	frames := make(chan wire.MuxHeader, 8)
+	go func() {
+		defer close(frames)
+		for {
+			header, err := wire.ReadMuxHeader(raw)
+			if err != nil {
+				return
+			}
+			if n := wire.MuxPayloadLen(header); n > 0 {
+				if _, err := io.CopyN(io.Discard, raw, int64(n)); err != nil {
+					return
+				}
+			}
+			frames <- header
+			if header.Kind == wire.MuxFrameFin {
+				return
+			}
+		}
+	}()
+	for header := range frames {
+		if header.Kind == wire.MuxFrameFin && header.FlowID == 5 {
+			break
+		}
+	}
+	// The FIN is on the wire while the flow stays retained: the peer has
+	// not half-closed yet, so protocol state survives for reverse DATA.
+	waitFor(t, 2*time.Second, func() bool {
+		return client.flowRetainedLocallyFinished(5)
+	})
+	if client.CanOpenFlow(5) {
+		t.Fatal("retained flow state still admits the same flow ID")
+	}
+
+	payload := bytes.Repeat([]byte{0x77}, 2048)
+	dataHeader, err := wire.DataMuxHeader(5, len(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, dataHeader, payload)
+
+	maxStream := creditUnits(DefaultConfig().StreamWindowBytes)
+	maxConn := creditUnits(DefaultConfig().ConnectionWindowBytes)
+	waitFor(t, 2*time.Second, func() bool {
+		credit, ok := client.flowReceiveCredit(5)
+		return ok && credit == maxStream-2
+	})
+	if got := client.connRecvUnits(); got != maxConn {
+		t.Fatalf("connection credit = %d, want full %d", got, maxConn)
+	}
+	if client.IsClosed() {
+		t.Fatal("carrier closed by discarded DATA")
+	}
+
+	finHeader, err := wire.FinMuxHeader(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, finHeader, nil)
+	waitFor(t, 2*time.Second, func() bool {
+		return !client.hasFlow(5)
+	})
+	if !client.CanOpenFlow(5) {
+		t.Fatal("retired flow state still refuses the flow ID")
+	}
+	if client.IsClosed() {
+		t.Fatal("carrier closed after flow retirement")
+	}
+}
+
+func TestResetRemovesFlowImmediately(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	stream, err := client.OpenStream(6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if header := readFrame(t, raw); header.Kind == wire.MuxFrameOpen && header.FlowID == 6 {
+			break
+		}
+	}
+	resetHeader, err := wire.ResetMuxHeader(6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, resetHeader, nil)
+	waitFor(t, 2*time.Second, func() bool {
+		return !client.hasFlow(6)
+	})
+	if client.IsClosed() {
+		t.Fatal("carrier closed by peer RESET")
+	}
+	if _, err := stream.Write([]byte("after")); err == nil {
+		t.Fatal("write after RESET succeeded")
+	}
 }

@@ -19,6 +19,8 @@ const (
 	muxDialTimeout = 15 * time.Second
 )
 
+var errNoMuxCarrier = errors.New("nowhere: no eligible TLS Mux carrier available")
+
 // MuxDirection is retained for API compatibility. Nowhere 2 uses one shared
 // full-duplex Mux pool, so uplink and downlink reservations compete together.
 type MuxDirection uint8
@@ -75,16 +77,16 @@ func (m *MuxManager) Open(ctx context.Context, flowID uint32, _ MuxDirection) (n
 		m.mu.Unlock()
 		return nil, net.ErrClosed
 	}
-	shard := m.reserveLocked()
+	shard, err := m.reserveLocked(flowID)
 	m.mu.Unlock()
-	if shard == nil {
-		return nil, errors.New("nowhere: mux pool unavailable")
+	if err != nil {
+		return nil, err
 	}
 	defer shard.pending.Add(-1)
 
 	handle, err := shard.wait(ctx)
 	if err != nil {
-		if fallback := m.fallback(); fallback != nil && fallback != shard {
+		if fallback := m.fallback(flowID); fallback != nil && fallback != shard {
 			fallback.pending.Add(1)
 			defer fallback.pending.Add(-1)
 			handle, err = fallback.wait(ctx)
@@ -121,7 +123,7 @@ func (m *MuxManager) Close() error {
 	return nil
 }
 
-func (m *MuxManager) reserveLocked() *muxShard {
+func (m *MuxManager) reserveLocked(flowID uint32) (*muxShard, error) {
 	live := m.shards[:0]
 	var best *muxShard
 	bestActive := 0
@@ -132,6 +134,12 @@ func (m *MuxManager) reserveLocked() *muxShard {
 			continue
 		}
 		live = append(live, shard)
+		if handle := shard.liveHandle(); handle != nil && !handle.CanOpenFlow(flowID) {
+			// The carrier still retains protocol state for this flow ID
+			// (or has exhausted its state budget); reopening the ID on it
+			// before that state retires would corrupt the stream map.
+			continue
+		}
 		active, pressure := shard.occupancy()
 		if !have || muxBetter(active, pressure, bestActive, bestPressure) {
 			best = shard
@@ -143,14 +151,35 @@ func (m *MuxManager) reserveLocked() *muxShard {
 	m.shards = live
 	if have && (bestActive == 0 || len(m.shards) >= MaxMuxCarriers) {
 		best.pending.Add(1)
-		return best
+		return best, nil
+	}
+	if len(m.shards) >= MaxMuxCarriers {
+		// Every established carrier conflicts with the requested flow ID.
+		// Retire an idle one and dial a replacement so wraparound cannot
+		// reopen that ID while protocol state survives.
+		index := -1
+		for i, shard := range m.shards {
+			if shard.pending.Load() != 0 {
+				continue
+			}
+			if handle := shard.liveHandle(); handle != nil && handle.ActiveStreams() == 0 {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return nil, errNoMuxCarrier
+		}
+		retired := m.shards[index]
+		m.shards = append(m.shards[:index], m.shards[index+1:]...)
+		retired.close()
 	}
 	shard := &muxShard{mgr: m, ready: make(chan struct{})}
 	shard.pending.Add(1)
 	m.shards = append(m.shards, shard)
 	go shard.dial()
 	go m.monitor(shard)
-	return shard
+	return shard, nil
 }
 
 func muxBetter(active, pressure, bestActive, bestPressure int) bool {
@@ -164,7 +193,7 @@ func muxBetter(active, pressure, bestActive, bestPressure int) bool {
 	return active < bestActive
 }
 
-func (m *MuxManager) fallback() *muxShard {
+func (m *MuxManager) fallback(flowID uint32) *muxShard {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var best *muxShard
@@ -173,7 +202,7 @@ func (m *MuxManager) fallback() *muxShard {
 	have := false
 	for _, shard := range m.shards {
 		handle := shard.liveHandle()
-		if handle == nil {
+		if handle == nil || !handle.CanOpenFlow(flowID) {
 			continue
 		}
 		active, pressure := shard.occupancy()

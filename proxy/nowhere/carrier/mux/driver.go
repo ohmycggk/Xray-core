@@ -73,11 +73,21 @@ func (s *shared) receiveOpen(header wire.MuxHeader) error {
 
 func (s *shared) receiveData(header wire.MuxHeader, payload []byte) error {
 	charge := frameCharge(len(payload))
-	ch, err := s.admitReceive(header.FlowID, charge)
+	target, ch, err := s.admitReceive(header.FlowID, charge)
 	if err != nil {
 		return err
 	}
-	if ch == nil {
+	switch target {
+	case receiveDiscard:
+		// Keep the per-stream debit so a peer cannot send an unbounded
+		// amount after the application has finished with this flow.
+		s.releaseConnReceive(charge)
+		return nil
+	case receiveAbandoned:
+		// The local read half was abandoned while its writer is still
+		// live. Return credit for the discarded bytes without killing
+		// other flows.
+		s.releaseReceive(header.FlowID, charge)
 		return nil
 	}
 	select {
@@ -101,11 +111,24 @@ func (s *shared) receiveClose(header wire.MuxHeader) {
 	s.flowsMu.Lock()
 	flow := s.flows[header.FlowID]
 	var ch chan inbound
+	var removed *flowState
 	if flow != nil && !flow.remoteFin {
-		flow.remoteFin = true
-		ch = flow.inbound
+		if flow.localParts == 0 && flow.localFinSent {
+			// Both application halves are gone and our FIN reached the
+			// wire; nothing can legitimately follow on this flow.
+			delete(s.flows, header.FlowID)
+			removed = flow
+		} else {
+			flow.remoteFin = true
+			ch = flow.inbound
+		}
 	}
 	s.flowsMu.Unlock()
+	if removed != nil {
+		removed.sendCredit.close()
+		removed.sendSlot.close()
+	}
+	s.notifyActive()
 	if ch != nil {
 		select {
 		case ch <- inbound{kind: inboundFin}:
@@ -198,6 +221,10 @@ func (s *shared) writeItem(w io.Writer, item outbound) error {
 		if err := writeFull(w, item.payload); err != nil {
 			return err
 		}
+	}
+	if item.header.Kind == wire.MuxFrameFin {
+		// The FIN is on the wire; retained state for this flow may retire.
+		s.finishLocalFin(item.header.FlowID)
 	}
 	if item.release != nil {
 		item.release.add(1)
