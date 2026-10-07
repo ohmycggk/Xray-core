@@ -129,6 +129,7 @@ func (*recordingPayloadConn) Read([]byte) (int, error) { return 0, io.EOF }
 func (c *recordingPayloadConn) Write(p []byte) (int, error) {
 	return c.written.Write(p)
 }
+
 func (c *recordingPayloadConn) Close() error {
 	c.closed = true
 	return nil

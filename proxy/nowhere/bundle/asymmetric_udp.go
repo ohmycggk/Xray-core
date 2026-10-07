@@ -55,12 +55,14 @@ func (a *asymmetricPacketConn) SetDeadline(t time.Time) error {
 	}
 	return a.SetWriteDeadline(t)
 }
+
 func (a *asymmetricPacketConn) SetReadDeadline(t time.Time) error {
 	if d, ok := a.downlink.(interface{ SetReadDeadline(time.Time) error }); ok {
 		return d.SetReadDeadline(t)
 	}
 	return nil
 }
+
 func (a *asymmetricPacketConn) SetWriteDeadline(t time.Time) error {
 	if d, ok := a.uplink.(interface{ SetWriteDeadline(time.Time) error }); ok {
 		return d.SetWriteDeadline(t)

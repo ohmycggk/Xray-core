@@ -15,8 +15,10 @@ import (
 
 // MaxMuxCarriers is the Nowhere 2 client pool cap for established or connecting
 // Mux TLS carriers in one session. Both logical directions share the pool.
-const MaxMuxCarriers = 8
-const muxDialTimeout = 15 * time.Second
+const (
+	MaxMuxCarriers = 8
+	muxDialTimeout = 15 * time.Second
+)
 
 var errNoMuxCarrier = errors.New("nowhere: no eligible TLS Mux carrier available")
 

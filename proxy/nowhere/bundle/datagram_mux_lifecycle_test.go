@@ -535,6 +535,7 @@ func (b *muxLifecycleBackend) AcquireSession(ctx context.Context) (carrier.QuicS
 	}
 	return nil, errors.New("unused")
 }
+
 func (b *muxLifecycleBackend) InvalidateSession(carrier.QuicSession) {
 	b.invalidations.Add(1)
 }
@@ -577,6 +578,7 @@ func (s *muxLifecycleSession) PrepareStream(ctx context.Context) (carrier.QuicPr
 	}
 	return nil, errors.New("unused")
 }
+
 func (s *muxLifecycleSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	if s.fail != nil {
 		select {

@@ -190,6 +190,7 @@ type v15DiscardUpstream struct{}
 func (v15DiscardUpstream) HandleStream(context.Context, net.Conn, net.Addr, wire.Target, FlowReadiness) error {
 	return nil
 }
+
 func (v15DiscardUpstream) HandlePacket(context.Context, net.PacketConn, net.Addr, wire.Target, FlowReadiness) error {
 	return nil
 }
@@ -248,6 +249,7 @@ func (c *v15QUICConn) AcceptStream(ctx context.Context) (QuicStream, error) {
 		return nil, net.ErrClosed
 	}
 }
+
 func (c *v15QUICConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	select {
 	case <-ctx.Done():

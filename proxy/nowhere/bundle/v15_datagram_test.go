@@ -124,12 +124,15 @@ func (s *v15PMTUSession) TLSHandshakeInfo() (wire.TLSHandshakeInfo, error) {
 		TLSVersion: 0x0304, NegotiatedALPN: wire.DefaultALPN,
 	}, nil
 }
+
 func (s *v15PMTUSession) PrepareStream(context.Context) (nquic.PreparedStream, error) {
 	return nil, errors.New("unused")
 }
+
 func (s *v15PMTUSession) ReceiveDatagram(context.Context) ([]byte, error) {
 	return nil, net.ErrClosed
 }
+
 func (s *v15PMTUSession) CurrentMaxDatagramSize() int {
 	if len(s.maxima) == 0 {
 		return 1200
@@ -140,6 +143,7 @@ func (s *v15PMTUSession) CurrentMaxDatagramSize() int {
 	}
 	return s.maxima[index]
 }
+
 func (s *v15PMTUSession) SendDatagram(_ context.Context, frame []byte) error {
 	s.frames = append(s.frames, append([]byte(nil), frame...))
 	index := s.sendCalls

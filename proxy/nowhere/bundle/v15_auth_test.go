@@ -228,10 +228,12 @@ func (s *v15AuthSession) TLSHandshakeInfo() (wire.TLSHandshakeInfo, error) {
 		TLSVersion: 0x0304, NegotiatedALPN: wire.DefaultALPN, Exporter: s.exporter,
 	}, s.exporterErr
 }
+
 func (s *v15AuthSession) PrepareStream(context.Context) (nquic.PreparedStream, error) {
 	s.prepareCalls++
 	return &s.stream, nil
 }
+
 func (*v15AuthSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -278,5 +280,7 @@ func (v15AuthNetConn) SetDeadline(time.Time) error      { return nil }
 func (v15AuthNetConn) SetReadDeadline(time.Time) error  { return nil }
 func (v15AuthNetConn) SetWriteDeadline(time.Time) error { return nil }
 
-var _ carrier.QuicBackend = (*v15AuthBackend)(nil)
-var _ carrier.QuicSession = (*v15AuthSession)(nil)
+var (
+	_ carrier.QuicBackend = (*v15AuthBackend)(nil)
+	_ carrier.QuicSession = (*v15AuthSession)(nil)
+)

@@ -70,17 +70,20 @@ func (c *serverHalfCloseConn) Read(p []byte) (int, error) {
 	defer c.mu.Unlock()
 	return c.reader.Read(p)
 }
+
 func (c *serverHalfCloseConn) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.writer.Write(p)
 }
+
 func (c *serverHalfCloseConn) CloseRead() error {
 	c.mu.Lock()
 	c.closeRead++
 	c.mu.Unlock()
 	return nil
 }
+
 func (c *serverHalfCloseConn) CloseWrite() error {
 	c.mu.Lock()
 	c.closeWrite++
@@ -94,14 +97,17 @@ func (*serverHalfCloseConn) SetDeadline(time.Time) error { return nil }
 func (*serverHalfCloseConn) SetReadDeadline(time.Time) error {
 	return nil
 }
+
 func (*serverHalfCloseConn) SetWriteDeadline(time.Time) error {
 	return nil
 }
+
 func (c *serverHalfCloseConn) closeWriteCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closeWrite
 }
+
 func (c *serverHalfCloseConn) written() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -66,11 +66,11 @@ const portalKey = "0123456789abcdef0123456789abcdef"
 
 func TestNowhereJSONConfigPortalKeyAdmission(t *testing.T) {
 	accepted := []string{
-		portalKey,                    // exactly 32
-		portalKey + portalKey,        // exactly 64
-		strings.Repeat("a", 33),      // odd length inside the 32-64 window
-		strings.Repeat("a", 32),      // exactly 32
-		strings.Repeat("f", 64),      // exactly 64
+		portalKey,               // exactly 32
+		portalKey + portalKey,   // exactly 64
+		strings.Repeat("a", 33), // odd length inside the 32-64 window
+		strings.Repeat("a", 32), // exactly 32
+		strings.Repeat("f", 64), // exactly 64
 	}
 	for _, key := range accepted {
 		server := new(conf.NowhereServerConfig)

@@ -129,6 +129,7 @@ func (c *graceBlockingConn) Close() error {
 	c.closeOnce.Do(func() { close(c.closed) })
 	return nil
 }
+
 func (c *graceBlockingConn) CloseWrite() error {
 	c.closeWriteOnce.Do(func() { close(c.closeWriteCalled) })
 	return nil

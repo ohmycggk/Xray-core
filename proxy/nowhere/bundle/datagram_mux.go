@@ -31,8 +31,10 @@ const (
 	quicInvalidationFinished
 )
 
-var errManagedDatagramReceive = errors.New("nowhere: quic datagram receive is bundle managed")
-var errQUICAuthenticationAborted = errors.New("nowhere: first quic stream closed before authentication")
+var (
+	errManagedDatagramReceive    = errors.New("nowhere: quic datagram receive is bundle managed")
+	errQUICAuthenticationAborted = errors.New("nowhere: first quic stream closed before authentication")
+)
 
 // errQUICShuttingDown rejects acquires issued after the backend closed. It
 // wraps net.ErrClosed so callers that classify that sentinel as fatal keep
@@ -547,6 +549,7 @@ func (s *quicSessionMux) CurrentMaxDatagramSize() int {
 	}
 	return s.raw.CurrentMaxDatagramSize()
 }
+
 func (s *quicSessionMux) SendDatagram(ctx context.Context, frame []byte) error {
 	return s.sendDatagram(ctx, nil, frame, nil)
 }
@@ -1006,8 +1009,10 @@ func (s *quicSessionMux) close(cause error) {
 	})
 }
 
-var _ carrier.QuicSession = (*quicSessionMux)(nil)
-var _ carrier.QuicPreparedStream = (*quicAuthPreparedStream)(nil)
+var (
+	_ carrier.QuicSession        = (*quicSessionMux)(nil)
+	_ carrier.QuicPreparedStream = (*quicAuthPreparedStream)(nil)
+)
 
 type quicQueuedPacket struct {
 	payload     []byte

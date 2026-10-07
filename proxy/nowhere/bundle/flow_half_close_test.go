@@ -118,16 +118,20 @@ func (c *halfCloseTestConn) closeReadCount() int {
 	defer c.mu.Unlock()
 	return c.closeRead
 }
+
 func (c *halfCloseTestConn) closeWriteCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closeWrite
 }
+
 func (c *halfCloseTestConn) written() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.writer.String()
 }
 
-var _ interface{ CloseRead() error } = (*halfCloseTestConn)(nil)
-var _ interface{ CloseWrite() error } = (*halfCloseTestConn)(nil)
+var (
+	_ interface{ CloseRead() error }  = (*halfCloseTestConn)(nil)
+	_ interface{ CloseWrite() error } = (*halfCloseTestConn)(nil)
+)

@@ -545,6 +545,7 @@ func (c *pairedUDPConn) SetDeadline(value time.Time) error {
 	}
 	return c.SetWriteDeadline(value)
 }
+
 func (c *pairedUDPConn) SetReadDeadline(value time.Time) error {
 	c.readDL.set(value)
 	if deadline, ok := c.uplink.(interface{ SetReadDeadline(time.Time) error }); ok {
@@ -552,6 +553,7 @@ func (c *pairedUDPConn) SetReadDeadline(value time.Time) error {
 	}
 	return nil
 }
+
 func (c *pairedUDPConn) SetWriteDeadline(value time.Time) error {
 	c.writeDL.set(value)
 	if deadline, ok := c.downlink.(interface{ SetWriteDeadline(time.Time) error }); ok {
