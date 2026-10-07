@@ -6,7 +6,6 @@ import (
 	stdnet "net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/xtls/xray-core/common/errors"
 	xnet "github.com/xtls/xray-core/common/net"
@@ -52,13 +51,13 @@ func (e *Endpoint) validate() error {
 	if e.Pool < 0 {
 		return errors.New("nowhere: pool must be >= 0")
 	}
-	if e.MixFallbackNs < 0 {
-		return errors.New("nowhere: mix fallback must be >= 0")
-	}
 	if _, err := normalizeMode(e.Up); err != nil {
 		return err
 	}
 	if _, err := normalizeMode(e.Down); err != nil {
+		return err
+	}
+	if _, err := ParseDialPolicy(e.Dial4, e.Dial6); err != nil {
 		return err
 	}
 	return nil
@@ -71,12 +70,23 @@ func (e *Endpoint) hostport() string {
 type carrierDialer interface {
 	DialTCP(ctx context.Context, address string) (stdnet.Conn, error)
 	DialPacket(ctx context.Context, address string) (stdnet.PacketConn, stdnet.Addr, error)
+	// ownsSourceBinding reports whether this dialer performs its own system
+	// dials and can therefore honour a DialPolicy source binding. Dialers that
+	// delegate to Xray's internet.Dialer leave source binding to that dialer.
+	ownsSourceBinding() bool
 }
 
 type xrayDialer struct {
 	dialer  internet.Dialer
 	sockopt *internet.SocketConfig
 	system  bool
+	policy  DialPolicy
+}
+
+// ownsSourceBinding reports whether this dialer dials the system itself rather
+// than delegating to Xray's outbound dialer.
+func (d xrayDialer) ownsSourceBinding() bool {
+	return d.system || d.dialer == nil
 }
 
 func (d xrayDialer) DialTCP(ctx context.Context, address string) (stdnet.Conn, error) {
@@ -84,10 +94,26 @@ func (d xrayDialer) DialTCP(ctx context.Context, address string) (stdnet.Conn, e
 	if err != nil {
 		return nil, err
 	}
-	if d.system || d.dialer == nil {
+	if !d.ownsSourceBinding() {
+		return d.dialer.Dial(ctx, dest)
+	}
+	if !d.policy.Configured() {
 		return internet.DialSystem(ctx, dest, d.sockopt)
 	}
-	return d.dialer.Dial(ctx, dest)
+	src, err := d.policy.bindSource(ctx, address)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &stdnet.Dialer{}
+	network := "tcp"
+	if src != nil {
+		dialer.LocalAddr = &stdnet.TCPAddr{IP: src}
+		network = "tcp4"
+		if src.To4() == nil {
+			network = "tcp6"
+		}
+	}
+	return dialer.DialContext(ctx, network, address)
 }
 
 func (d xrayDialer) DialPacket(ctx context.Context, address string) (stdnet.PacketConn, stdnet.Addr, error) {
@@ -96,10 +122,12 @@ func (d xrayDialer) DialPacket(ctx context.Context, address string) (stdnet.Pack
 		return nil, nil, err
 	}
 	var conn stdnet.Conn
-	if d.system || d.dialer == nil {
+	if !d.ownsSourceBinding() {
+		conn, err = d.dialer.Dial(ctx, dest)
+	} else if !d.policy.Configured() {
 		conn, err = internet.DialSystem(ctx, dest, d.sockopt)
 	} else {
-		conn, err = d.dialer.Dial(ctx, dest)
+		conn, err = d.dialBoundUDP(ctx, address)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -110,6 +138,25 @@ func (d xrayDialer) DialPacket(ctx context.Context, address string) (stdnet.Pack
 		return nil, nil, uerr
 	}
 	return pc, addr, nil
+}
+
+// dialBoundUDP connects a UDP socket to address from the source the policy pins
+// for the target's address family.
+func (d xrayDialer) dialBoundUDP(ctx context.Context, address string) (stdnet.Conn, error) {
+	src, err := d.policy.bindSource(ctx, address)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &stdnet.Dialer{}
+	network := "udp"
+	if src != nil {
+		dialer.LocalAddr = &stdnet.UDPAddr{IP: src}
+		network = "udp4"
+		if src.To4() == nil {
+			network = "udp6"
+		}
+	}
+	return dialer.DialContext(ctx, network, address)
 }
 
 func unwrapPacketConn(conn stdnet.Conn) (stdnet.PacketConn, stdnet.Addr, error) {
@@ -178,19 +225,16 @@ func openBundle(ep *Endpoint, dial carrierDialer) (*bundle.CarrierBundle, error)
 	if (needsQUIC || muxMode == bundle.MuxEnabled) && ep.Pool != 0 {
 		return nil, errors.New("nowhere: pool must be 0 when mux or QUIC is enabled")
 	}
-	upCarrier, mixUp := up.Selectors()
-	downCarrier, mixDown := down.Selectors()
+	upCarrier := up.Selectors()
+	downCarrier := down.Selectors()
 	addr := ep.hostport()
 	opts := bundle.BundleOptions{
-		Credentials:        credentials,
-		ALPN:               alpn,
-		PoolSize:           int(ep.Pool),
-		Up:                 upCarrier,
-		Down:               downCarrier,
-		MixUp:              mixUp,
-		MixDown:            mixDown,
-		MixFallbackTimeout: time.Duration(ep.MixFallbackNs),
-		Mux:                muxMode,
+		Credentials: credentials,
+		ALPN:        alpn,
+		PoolSize:    int(ep.Pool),
+		Up:          upCarrier,
+		Down:        downCarrier,
+		Mux:         muxMode,
 	}
 	var morphKey []byte
 	if ep.Morph {

@@ -12,7 +12,7 @@ message Certificate {
   bytes key = 2;
 }
 
-// Endpoint is one Nowhere peer. up and down are tcp, udp, or mix.
+// Endpoint is one Nowhere peer. up and down are tcp or udp.
 message Endpoint {
   string address = 1;
   uint32 port = 2;
@@ -26,7 +26,14 @@ message Endpoint {
   bool allow_insecure = 10;
   int32 pool = 11;
   string alpn = 12;
+  // Retained for wire compatibility; no longer parsed from JSON.
   int64 mix_fallback_ns = 13;
+  // Dial4 pins the IPv4 source address for outbound dials. "auto" or empty lets
+  // the kernel choose.
+  string dial4 = 14;
+  // Dial6 pins the IPv6 source address for outbound dials. "auto" or empty lets
+  // the kernel choose.
+  string dial6 = 15;
 }
 
 message ServerConfig {

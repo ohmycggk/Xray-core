@@ -130,7 +130,13 @@ func NewServer(ctx context.Context, config *ServerConfig) (*Server, error) {
 		if config.Next.Alpn == "" {
 			config.Next.Alpn = alpn
 		}
-		nextBundle, err := openBundle(config.Next, xrayDialer{sockopt: sockopt, system: true})
+		// The Portal next hop is the one dial this package performs itself, so
+		// it is where a dial4/dial6 source-binding policy takes effect.
+		policy, err := ParseDialPolicy(config.Next.Dial4, config.Next.Dial6)
+		if err != nil {
+			return nil, err
+		}
+		nextBundle, err := openBundle(config.Next, xrayDialer{sockopt: sockopt, system: true, policy: policy})
 		if err != nil {
 			return nil, err
 		}

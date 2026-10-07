@@ -317,7 +317,5 @@ func osErrDeadline() error {
 	return errDatagramDeadline
 }
 
-var (
-	_ net.PacketConn = (*asyncUDPConn)(nil)
-	_ io.Closer      = (*asyncUDPConn)(nil)
-)
+var _ net.PacketConn = (*asyncUDPConn)(nil)
+var _ io.Closer = (*asyncUDPConn)(nil)

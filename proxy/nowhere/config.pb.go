@@ -74,7 +74,7 @@ func (x *Certificate) GetKey() []byte {
 	return nil
 }
 
-// Endpoint is one Nowhere peer. up and down are tcp, udp, or mix.
+// Endpoint is one Nowhere peer. up and down are tcp or udp.
 type Endpoint struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
@@ -89,7 +89,14 @@ type Endpoint struct {
 	AllowInsecure bool                   `protobuf:"varint,10,opt,name=allow_insecure,json=allowInsecure,proto3" json:"allow_insecure,omitempty"`
 	Pool          int32                  `protobuf:"varint,11,opt,name=pool,proto3" json:"pool,omitempty"`
 	Alpn          string                 `protobuf:"bytes,12,opt,name=alpn,proto3" json:"alpn,omitempty"`
-	MixFallbackNs int64                  `protobuf:"varint,13,opt,name=mix_fallback_ns,json=mixFallbackNs,proto3" json:"mix_fallback_ns,omitempty"`
+	// Retained for wire compatibility; no longer parsed from JSON.
+	MixFallbackNs int64 `protobuf:"varint,13,opt,name=mix_fallback_ns,json=mixFallbackNs,proto3" json:"mix_fallback_ns,omitempty"`
+	// Dial4 pins the IPv4 source address for outbound dials. "auto" or empty lets
+	// the kernel choose.
+	Dial4 string `protobuf:"bytes,14,opt,name=dial4,proto3" json:"dial4,omitempty"`
+	// Dial6 pins the IPv6 source address for outbound dials. "auto" or empty lets
+	// the kernel choose.
+	Dial6         string `protobuf:"bytes,15,opt,name=dial6,proto3" json:"dial6,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -213,6 +220,20 @@ func (x *Endpoint) GetMixFallbackNs() int64 {
 		return x.MixFallbackNs
 	}
 	return 0
+}
+
+func (x *Endpoint) GetDial4() string {
+	if x != nil {
+		return x.Dial4
+	}
+	return ""
+}
+
+func (x *Endpoint) GetDial6() string {
+	if x != nil {
+		return x.Dial6
+	}
+	return ""
 }
 
 type ServerConfig struct {
@@ -368,7 +389,7 @@ const file_proxy_nowhere_config_proto_rawDesc = "" +
 	"\x1aproxy/nowhere/config.proto\x12\x12xray.proxy.nowhere\"A\n" +
 	"\vCertificate\x12 \n" +
 	"\vcertificate\x18\x01 \x01(\fR\vcertificate\x12\x10\n" +
-	"\x03key\x18\x02 \x01(\fR\x03key\"\xca\x02\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key\"\xf6\x02\n" +
 	"\bEndpoint\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1a\n" +
@@ -384,7 +405,9 @@ const file_proxy_nowhere_config_proto_rawDesc = "" +
 	" \x01(\bR\rallowInsecure\x12\x12\n" +
 	"\x04pool\x18\v \x01(\x05R\x04pool\x12\x12\n" +
 	"\x04alpn\x18\f \x01(\tR\x04alpn\x12&\n" +
-	"\x0fmix_fallback_ns\x18\r \x01(\x03R\rmixFallbackNs\"\x86\x02\n" +
+	"\x0fmix_fallback_ns\x18\r \x01(\x03R\rmixFallbackNs\x12\x14\n" +
+	"\x05dial4\x18\x0e \x01(\tR\x05dial4\x12\x14\n" +
+	"\x05dial6\x18\x0f \x01(\tR\x05dial6\"\x86\x02\n" +
 	"\fServerConfig\x12\x1a\n" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\x12\x1a\n" +
 	"\bnetworks\x18\x02 \x03(\tR\bnetworks\x12\x14\n" +

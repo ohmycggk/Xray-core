@@ -51,7 +51,6 @@ func TestNowhereCarriers(t *testing.T) {
 		{name: "quic-udp", up: "udp", down: "udp", udp: true},
 		{name: "split-tcp-udp", up: "tcp", down: "udp"},
 		{name: "split-udp-tcp", up: "udp", down: "tcp", udp: true},
-		{name: "mix", up: "mix", down: "mix"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,6 +61,20 @@ func TestNowhereCarriers(t *testing.T) {
 				assertTCP(t, flow, echoPort)
 			}
 		})
+	}
+}
+
+func TestNowhereRejectsMixCarrier(t *testing.T) {
+	_, err := openBundle(&Endpoint{
+		Address:       "127.0.0.1",
+		Port:          443,
+		Password:      "secret",
+		Up:            "mix",
+		Down:          "mix",
+		AllowInsecure: true,
+	}, testPacketDialer{})
+	if err == nil {
+		t.Fatal("expected mix carrier rejection")
 	}
 }
 
@@ -300,6 +313,10 @@ func (testPacketDialer) DialPacket(ctx context.Context, address string) (stdnet.
 	}
 	return pc, remote, nil
 }
+
+// ownsSourceBinding reports false: this dialer is a test double that always
+// dials the system itself and carries no source-binding policy.
+func (testPacketDialer) ownsSourceBinding() bool { return true }
 
 func testBundle(t *testing.T, port int, password, up, down string, mux, morph bool) *bundle.CarrierBundle {
 	t.Helper()

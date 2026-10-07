@@ -1,10 +1,11 @@
 package conf
 
 import (
-	"time"
+	"strings"
 
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/proxy/nowhere"
+	"github.com/xtls/xray-core/proxy/nowhere/bundle"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -21,12 +22,25 @@ type NowhereEndpointConfig struct {
 	AllowInsecure bool     `json:"allowInsecure"`
 	Pool          int32    `json:"pool"`
 	ALPN          string   `json:"alpn"`
-	MixFallback   string   `json:"mixFallback"`
+	Dial4         string   `json:"dial4"`
+	Dial6         string   `json:"dial6"`
 }
 
 func (c *NowhereEndpointConfig) Build() (*nowhere.Endpoint, error) {
 	if c == nil || c.Address == nil || c.Address.Address == nil || c.Port == 0 || c.Password == "" {
 		return nil, errors.New("nowhere: endpoint requires address, port, and password")
+	}
+	for _, mode := range []string{c.Up, c.Down} {
+		normalized := strings.ToLower(strings.TrimSpace(mode))
+		if normalized == "" {
+			continue
+		}
+		if _, err := bundle.ParseCarrierMode(normalized); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := nowhere.ParseDialPolicy(c.Dial4, c.Dial6); err != nil {
+		return nil, err
 	}
 	endpoint := &nowhere.Endpoint{
 		Address:       c.Address.String(),
@@ -41,16 +55,8 @@ func (c *NowhereEndpointConfig) Build() (*nowhere.Endpoint, error) {
 		AllowInsecure: c.AllowInsecure,
 		Pool:          c.Pool,
 		Alpn:          c.ALPN,
-	}
-	if c.MixFallback != "" {
-		fallback, err := time.ParseDuration(c.MixFallback)
-		if err != nil {
-			return nil, errors.New("nowhere: invalid mixFallback").Base(err)
-		}
-		if fallback < 0 {
-			return nil, errors.New("nowhere: mixFallback must be >= 0")
-		}
-		endpoint.MixFallbackNs = int64(fallback)
+		Dial4:         c.Dial4,
+		Dial6:         c.Dial6,
 	}
 	return endpoint, nil
 }
@@ -68,6 +74,9 @@ type NowhereServerConfig struct {
 func (c *NowhereServerConfig) Build() (proto.Message, error) {
 	if c == nil || c.Password == "" {
 		return nil, errors.New("nowhere: missing password")
+	}
+	if err := validatePortalKey("Portal listener", c.Password); err != nil {
+		return nil, err
 	}
 	config := &nowhere.ServerConfig{
 		Password:  c.Password,
@@ -87,6 +96,9 @@ func (c *NowhereServerConfig) Build() (proto.Message, error) {
 		})
 	}
 	if c.Next != nil {
+		if err := validatePortalKey("Portal next endpoint", c.Next.Password); err != nil {
+			return nil, err
+		}
 		next, err := c.Next.Build()
 		if err != nil {
 			return nil, err
@@ -94,6 +106,31 @@ func (c *NowhereServerConfig) Build() (proto.Message, error) {
 		config.Next = next
 	}
 	return config, nil
+}
+
+// Portal key admission bounds: the Nowhere 2.2 Portal shared key is 32-64
+// lowercase hexadecimal characters after URL percent-decoding. Odd lengths are
+// allowed; the bytes are used directly without hex decoding.
+const (
+	portalKeyMinLen = 32
+	portalKeyMaxLen = 64
+)
+
+// validatePortalKey enforces the Portal shared-key rule. JSON configuration
+// already carries the percent-decoded value, so no second decoding is applied.
+// Client-side keys stay lenient (1-255 decoded bytes) and are bounded by
+// wire.NewCredentials instead.
+func validatePortalKey(context, key string) error {
+	if len(key) < portalKeyMinLen || len(key) > portalKeyMaxLen {
+		return errors.New("nowhere: ", context, ": shared key must be 32-64 lowercase hexadecimal characters; use nowhere generate-key")
+	}
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return errors.New("nowhere: ", context, ": shared key must be 32-64 lowercase hexadecimal characters; use nowhere generate-key")
+		}
+	}
+	return nil
 }
 
 type NowhereClientConfig struct {

@@ -41,6 +41,14 @@ func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 	if err := config.Endpoint.validate(); err != nil {
 		return nil, err
 	}
+	// The outbound delegates its carrier dial to Xray's internet.Dialer, so it
+	// cannot pin a source address itself; sendThrough on the freedom outbound is
+	// the Xray-wide mechanism for that.
+	if policy, err := ParseDialPolicy(config.Endpoint.Dial4, config.Endpoint.Dial6); err != nil {
+		return nil, err
+	} else if policy.Configured() {
+		return nil, errors.New("nowhere: dial4/dial6 are only supported on a portal next hop; use sendThrough on the freedom outbound instead")
+	}
 	stream, err := validateRawStream(ctx)
 	if err != nil {
 		return nil, err
