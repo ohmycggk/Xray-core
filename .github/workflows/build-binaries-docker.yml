@@ -1,15 +1,15 @@
 name: Build Binaries and Docker Image
 
 on:
-  push:
-    branches: [feat/nowhere]
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Docker image tag (optional, default: branch-sha / branch)"
+      version:
+        description: "Version override (default: tag name, or artifact-only manual run)"
         required: false
+        type: string
+  push:
+    tags:
+      - "v*"
 
 concurrency:
   group: build-binaries-docker-${{ github.ref }}
@@ -126,6 +126,7 @@ jobs:
 
   release:
     needs: build-binaries
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.version != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -135,23 +136,21 @@ jobs:
 
       - name: Determine release parameters
         id: rel
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "name=Xray ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "tag=dev-feat-nowhere" >> "$GITHUB_OUTPUT"
-            echo "name=Development Build (feat/nowhere)" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            TAG="${INPUT_VERSION}"
           fi
-
-      - name: Create or move release tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "${{ steps.rel.outputs.tag }}" "${GITHUB_SHA}"
-          git push -f origin "refs/tags/${{ steps.rel.outputs.tag }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "name=Xray ${TAG}" >> "$GITHUB_OUTPUT"
+          if [[ "${TAG}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download build artifacts
         uses: actions/download-artifact@v7
@@ -172,6 +171,7 @@ jobs:
           file: release-assets/*.zip
 
   docker:
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.version != '')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -185,21 +185,19 @@ jobs:
           echo "FULL_IMAGE_NAME=ghcr.io/${IMAGE_NAME,,}" >>${GITHUB_ENV}
 
       - name: Determine image tags
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          INPUT_TAG="${{ github.event.inputs.tag }}"
-          SHORTSHA="${GITHUB_SHA::7}"
-          SANITIZED_BRANCH="${GITHUB_REF_NAME//\//-}"
-          if [[ -n "$INPUT_TAG" ]]; then
-            echo "Using dispatch input tag: '${INPUT_TAG}'."
-            TAGS="${FULL_IMAGE_NAME}:${INPUT_TAG}"
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "Using git tag: '${GITHUB_REF_NAME}'."
             TAGS="${FULL_IMAGE_NAME}:${GITHUB_REF_NAME}"
+            if [[ "${GITHUB_REF_NAME}" != *-* ]]; then
+              TAGS="${TAGS},${FULL_IMAGE_NAME}:latest"
+            fi
           else
-            echo "Using branch-based tags for '${GITHUB_REF_NAME}'."
-            TAGS="${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}-${SHORTSHA},${FULL_IMAGE_NAME}:${SANITIZED_BRANCH}"
+            echo "Using dispatch version: '${INPUT_VERSION}'."
+            TAGS="${FULL_IMAGE_NAME}:${INPUT_VERSION}"
           fi
-          TAGS="${TAGS},${FULL_IMAGE_NAME}:latest"
           echo "IMAGE_TAGS=${TAGS}" >> "$GITHUB_ENV"
           echo "PRIMARY_TAG=${TAGS%%,*}" >> "$GITHUB_ENV"
 
