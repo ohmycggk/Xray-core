@@ -26,15 +26,15 @@ import (
 	_ "github.com/xtls/xray-core/transport/internet/udp"
 )
 
-// TestNowhereV3QUICForwarding runs a full Nowhere 3 endpoint pair over the QUIC
-// carrier with Morph on (the v3 default): the Portal serves a sealed UDP socket
-// below QUIC, and both TCP flows and UDP datagrams reach the echo target.
+// TestNowhereV3QUICForwarding runs a full Nowhere 3 endpoint pair over the UDP
+// transport with Morph on (the nw3 default): the Portal serves a sealed UDP
+// socket below QUIC, and both TCP flows and UDP datagrams reach the echo target.
 func TestNowhereV3QUICForwarding(t *testing.T) {
 	echoPort := startTCPEcho(t)
 	udpPort := startUDPEcho(t)
 	serverPort := freePort(t)
-	startV3Portal(t, serverPort, testNw3Key, nowhereV3CarrierQUIC, nil, false, []string{"udp"})
-	handler := startV3Client(t, serverPort, testNw3Key, nowhereV3CarrierQUIC, nil)
+	startV3Portal(t, serverPort, testNw3Key, nowhereV3NetUDP, nil, false, []string{"udp"})
+	handler := startV3Client(t, serverPort, testNw3Key, nowhereV3NetUDP, nil)
 
 	assertV3TCP(t, handler, echoPort)
 	assertV3UDP(t, handler, udpPort)
@@ -52,8 +52,8 @@ func TestNowhereV3EgressRegistration(t *testing.T) {
 	primaryEcho := startTaggedTCPEcho(t, "primary")
 	secondaryEcho := startTaggedTCPEcho(t, "secondary")
 	serverPort := freePort(t)
-	startV3Portal(t, serverPort, testNw3Key, nowhereV3CarrierQUIC, nil, true, []string{"udp"})
-	handler := startV3Client(t, serverPort, testNw3Key, nowhereV3CarrierQUIC, nil)
+	startV3Portal(t, serverPort, testNw3Key, nowhereV3NetUDP, nil, true, []string{"udp"})
+	handler := startV3Client(t, serverPort, testNw3Key, nowhereV3NetUDP, nil)
 
 	primary := startV3Egress(t, serverPort, primaryEcho)
 	// Registration has no success signal, so poll the data path.

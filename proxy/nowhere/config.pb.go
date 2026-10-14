@@ -74,9 +74,10 @@ func (x *Certificate) GetKey() []byte {
 	return nil
 }
 
-// Endpoint is one Nowhere peer. up and down are tcp or udp. Version and Carrier
-// select the Nowhere 3 (nw3) stack; the zero values keep the Nowhere 2 (nw2)
-// matrix below.
+// Endpoint is one Nowhere peer. up and down are tcp or udp. The stack is
+// selected by alpn: an empty or nw3 ALPN runs the Nowhere 3 (nw3) stack, any
+// other value keeps the Nowhere 2 (nw2) matrix below. Net selects the single
+// Nowhere 3 transport; the zero value keeps TLS over TCP.
 type Endpoint struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
@@ -90,7 +91,9 @@ type Endpoint struct {
 	Pin           string                 `protobuf:"bytes,9,opt,name=pin,proto3" json:"pin,omitempty"`
 	AllowInsecure bool                   `protobuf:"varint,10,opt,name=allow_insecure,json=allowInsecure,proto3" json:"allow_insecure,omitempty"`
 	Pool          int32                  `protobuf:"varint,11,opt,name=pool,proto3" json:"pool,omitempty"`
-	Alpn          string                 `protobuf:"bytes,12,opt,name=alpn,proto3" json:"alpn,omitempty"`
+	// Alpn selects the protocol stack: empty or nw3 runs Nowhere 3, any other
+	// value keeps the legacy Nowhere 2 stack and is the ALPN it negotiates.
+	Alpn string `protobuf:"bytes,12,opt,name=alpn,proto3" json:"alpn,omitempty"`
 	// Retained for wire compatibility; no longer parsed from JSON.
 	MixFallbackNs int64 `protobuf:"varint,13,opt,name=mix_fallback_ns,json=mixFallbackNs,proto3" json:"mix_fallback_ns,omitempty"`
 	// Dial4 pins the IPv4 source address for outbound dials. "auto" or empty lets
@@ -99,12 +102,9 @@ type Endpoint struct {
 	// Dial6 pins the IPv6 source address for outbound dials. "auto" or empty lets
 	// the kernel choose.
 	Dial6 string `protobuf:"bytes,15,opt,name=dial6,proto3" json:"dial6,omitempty"`
-	// Version selects the protocol stack: 0 or 2 is Nowhere 2 (nw2) and keeps
-	// every field above meaningful, 3 is Nowhere 3 (nw3).
-	Version int32 `protobuf:"varint,16,opt,name=version,proto3" json:"version,omitempty"`
-	// Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or quic.
-	// Empty means tcp. Nowhere 2 ignores it and uses up/down instead.
-	Carrier       string `protobuf:"bytes,17,opt,name=carrier,proto3" json:"carrier,omitempty"`
+	// Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+	// (QUIC). Empty means tcp. Nowhere 2 ignores it and uses up/down instead.
+	Net           string `protobuf:"bytes,17,opt,name=net,proto3" json:"net,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -244,16 +244,9 @@ func (x *Endpoint) GetDial6() string {
 	return ""
 }
 
-func (x *Endpoint) GetVersion() int32 {
+func (x *Endpoint) GetNet() string {
 	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-func (x *Endpoint) GetCarrier() string {
-	if x != nil {
-		return x.Carrier
+		return x.Net
 	}
 	return ""
 }
@@ -265,20 +258,18 @@ type ServerConfig struct {
 	Networks     []string       `protobuf:"bytes,2,rep,name=networks,proto3" json:"networks,omitempty"`
 	Morph        *bool          `protobuf:"varint,3,opt,name=morph,proto3,oneof" json:"morph,omitempty"`
 	Certificates []*Certificate `protobuf:"bytes,4,rep,name=certificates,proto3" json:"certificates,omitempty"`
-	Alpn         string         `protobuf:"bytes,5,opt,name=alpn,proto3" json:"alpn,omitempty"`
+	// Alpn selects the protocol stack: empty or nw3 runs Nowhere 3, any other
+	// value keeps the legacy Nowhere 2 stack and is the ALPN it negotiates.
+	Alpn string `protobuf:"bytes,5,opt,name=alpn,proto3" json:"alpn,omitempty"`
 	// Next forwards flows to another Nowhere portal instead of the router.
 	Next      *Endpoint `protobuf:"bytes,6,opt,name=next,proto3" json:"next,omitempty"`
 	UserLevel uint32    `protobuf:"varint,7,opt,name=user_level,json=userLevel,proto3" json:"user_level,omitempty"`
-	// Version selects the protocol stack: 0 or 2 is Nowhere 2 (nw2), 3 is
-	// Nowhere 3 (nw3), which serves ALPN nw3 only and rejects the nw2-only
-	// fields above.
-	Version int32 `protobuf:"varint,8,opt,name=version,proto3" json:"version,omitempty"`
-	// Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or quic.
-	// Empty means tcp.
-	Carrier string `protobuf:"bytes,9,opt,name=carrier,proto3" json:"carrier,omitempty"`
+	// Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+	// (QUIC). Empty means tcp.
+	Net string `protobuf:"bytes,9,opt,name=net,proto3" json:"net,omitempty"`
 	// Egress turns the Nowhere 3 Portal into an exit bridge: it accepts one
-	// Egress registration over the quic carrier and forwards every authenticated
-	// flow to that exit instead of the local router.
+	// Egress registration over the QUIC transport and forwards every
+	// authenticated flow to that exit instead of the local router.
 	Egress        bool `protobuf:"varint,10,opt,name=egress,proto3" json:"egress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -363,16 +354,9 @@ func (x *ServerConfig) GetUserLevel() uint32 {
 	return 0
 }
 
-func (x *ServerConfig) GetVersion() int32 {
+func (x *ServerConfig) GetNet() string {
 	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-func (x *ServerConfig) GetCarrier() string {
-	if x != nil {
-		return x.Carrier
+		return x.Net
 	}
 	return ""
 }
@@ -385,7 +369,7 @@ func (x *ServerConfig) GetEgress() bool {
 }
 
 // EgressConfig is the Nowhere 3 Egress client. It never listens: it dials a
-// Nowhere 3 Portal over the quic carrier, registers as the Portal's single
+// Nowhere 3 Portal over the QUIC transport, registers as the Portal's single
 // exit, and serves the flows the Portal opens through the local router.
 type EgressConfig struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -538,7 +522,7 @@ const file_proxy_nowhere_config_proto_rawDesc = "" +
 	"\x1aproxy/nowhere/config.proto\x12\x12xray.proxy.nowhere\"A\n" +
 	"\vCertificate\x12 \n" +
 	"\vcertificate\x18\x01 \x01(\fR\vcertificate\x12\x10\n" +
-	"\x03key\x18\x02 \x01(\fR\x03key\"\xb9\x03\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key\"\x9d\x03\n" +
 	"\bEndpoint\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1a\n" +
@@ -556,10 +540,9 @@ const file_proxy_nowhere_config_proto_rawDesc = "" +
 	"\x04alpn\x18\f \x01(\tR\x04alpn\x12&\n" +
 	"\x0fmix_fallback_ns\x18\r \x01(\x03R\rmixFallbackNs\x12\x14\n" +
 	"\x05dial4\x18\x0e \x01(\tR\x05dial4\x12\x14\n" +
-	"\x05dial6\x18\x0f \x01(\tR\x05dial6\x12\x18\n" +
-	"\aversion\x18\x10 \x01(\x05R\aversion\x12\x18\n" +
-	"\acarrier\x18\x11 \x01(\tR\acarrierB\b\n" +
-	"\x06_morph\"\xe1\x02\n" +
+	"\x05dial6\x18\x0f \x01(\tR\x05dial6\x12\x10\n" +
+	"\x03net\x18\x11 \x01(\tR\x03netB\b\n" +
+	"\x06_morphJ\x04\b\x10\x10\x11\"\xc5\x02\n" +
 	"\fServerConfig\x12\x1a\n" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\x12\x1a\n" +
 	"\bnetworks\x18\x02 \x03(\tR\bnetworks\x12\x19\n" +
@@ -568,12 +551,11 @@ const file_proxy_nowhere_config_proto_rawDesc = "" +
 	"\x04alpn\x18\x05 \x01(\tR\x04alpn\x120\n" +
 	"\x04next\x18\x06 \x01(\v2\x1c.xray.proxy.nowhere.EndpointR\x04next\x12\x1d\n" +
 	"\n" +
-	"user_level\x18\a \x01(\rR\tuserLevel\x12\x18\n" +
-	"\aversion\x18\b \x01(\x05R\aversion\x12\x18\n" +
-	"\acarrier\x18\t \x01(\tR\acarrier\x12\x16\n" +
+	"user_level\x18\a \x01(\rR\tuserLevel\x12\x10\n" +
+	"\x03net\x18\t \x01(\tR\x03net\x12\x16\n" +
 	"\x06egress\x18\n" +
 	" \x01(\bR\x06egressB\b\n" +
-	"\x06_morph\"\xd7\x01\n" +
+	"\x06_morphJ\x04\b\b\x10\t\"\xd7\x01\n" +
 	"\fEgressConfig\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1a\n" +

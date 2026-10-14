@@ -12,9 +12,10 @@ message Certificate {
   bytes key = 2;
 }
 
-// Endpoint is one Nowhere peer. up and down are tcp or udp. Version and Carrier
-// select the Nowhere 3 (nw3) stack; the zero values keep the Nowhere 2 (nw2)
-// matrix below.
+// Endpoint is one Nowhere peer. up and down are tcp or udp. The stack is
+// selected by alpn: an empty or nw3 ALPN runs the Nowhere 3 (nw3) stack, any
+// other value keeps the Nowhere 2 (nw2) matrix below. Net selects the single
+// Nowhere 3 transport; the zero value keeps TLS over TCP.
 message Endpoint {
   string address = 1;
   uint32 port = 2;
@@ -27,6 +28,8 @@ message Endpoint {
   string pin = 9;
   bool allow_insecure = 10;
   int32 pool = 11;
+  // Alpn selects the protocol stack: empty or nw3 runs Nowhere 3, any other
+  // value keeps the legacy Nowhere 2 stack and is the ALPN it negotiates.
   string alpn = 12;
   // Retained for wire compatibility; no longer parsed from JSON.
   int64 mix_fallback_ns = 13;
@@ -36,12 +39,11 @@ message Endpoint {
   // Dial6 pins the IPv6 source address for outbound dials. "auto" or empty lets
   // the kernel choose.
   string dial6 = 15;
-  // Version selects the protocol stack: 0 or 2 is Nowhere 2 (nw2) and keeps
-  // every field above meaningful, 3 is Nowhere 3 (nw3).
-  int32 version = 16;
-  // Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or quic.
-  // Empty means tcp. Nowhere 2 ignores it and uses up/down instead.
-  string carrier = 17;
+  // Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+  // (QUIC). Empty means tcp. Nowhere 2 ignores it and uses up/down instead.
+  string net = 17;
+  // Reserved for the removed version selector; the stack now comes from alpn.
+  reserved 16;
 }
 
 message ServerConfig {
@@ -50,25 +52,25 @@ message ServerConfig {
   repeated string networks = 2;
   optional bool morph = 3;
   repeated Certificate certificates = 4;
+  // Alpn selects the protocol stack: empty or nw3 runs Nowhere 3, any other
+  // value keeps the legacy Nowhere 2 stack and is the ALPN it negotiates.
   string alpn = 5;
   // Next forwards flows to another Nowhere portal instead of the router.
   Endpoint next = 6;
   uint32 user_level = 7;
-  // Version selects the protocol stack: 0 or 2 is Nowhere 2 (nw2), 3 is
-  // Nowhere 3 (nw3), which serves ALPN nw3 only and rejects the nw2-only
-  // fields above.
-  int32 version = 8;
-  // Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or quic.
-  // Empty means tcp.
-  string carrier = 9;
+  // Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+  // (QUIC). Empty means tcp.
+  string net = 9;
+  // Reserved for the removed version selector; the stack now comes from alpn.
+  reserved 8;
   // Egress turns the Nowhere 3 Portal into an exit bridge: it accepts one
-  // Egress registration over the quic carrier and forwards every authenticated
-  // flow to that exit instead of the local router.
+  // Egress registration over the QUIC transport and forwards every
+  // authenticated flow to that exit instead of the local router.
   bool egress = 10;
 }
 
 // EgressConfig is the Nowhere 3 Egress client. It never listens: it dials a
-// Nowhere 3 Portal over the quic carrier, registers as the Portal's single
+// Nowhere 3 Portal over the QUIC transport, registers as the Portal's single
 // exit, and serves the flows the Portal opens through the local router.
 message EgressConfig {
   string address = 1;

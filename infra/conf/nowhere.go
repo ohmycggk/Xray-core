@@ -22,31 +22,32 @@ type NowhereEndpointConfig struct {
 	Pin           string   `json:"pin"`
 	AllowInsecure bool     `json:"allowInsecure"`
 	Pool          int32    `json:"pool"`
-	ALPN          string   `json:"alpn"`
-	Dial4         string   `json:"dial4"`
-	Dial6         string   `json:"dial6"`
-	// Version selects the protocol stack: 0 or 2 is Nowhere 2 (nw2), 3 is
-	// Nowhere 3 (nw3), which speaks only ALPN nw3, uses exactly one carrier,
-	// and requires a 32-character lowercase hex key.
-	Version int32 `json:"version"`
-	// Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or
-	// quic. Empty means tcp. Nowhere 2 ignores it and uses up/down instead.
-	Carrier string `json:"carrier"`
+	// ALPN selects the protocol stack: an empty value or "nw3" runs Nowhere 3,
+	// which speaks only ALPN nw3, uses exactly one transport, requires a
+	// 32-character lowercase hex key, and turns Morph on by default. Any other
+	// value keeps the legacy Nowhere 2 stack, which uses the up/down matrix and
+	// the negotiated ALPN above. The two stacks share no handshake, so a single
+	// endpoint runs exactly one stack and the fields of the other stack are
+	// rejected.
+	ALPN  string `json:"alpn"`
+	Dial4 string `json:"dial4"`
+	Dial6 string `json:"dial6"`
+	// Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+	// (QUIC). Empty means tcp. It is a Nowhere 3 field: the nw2 stack selects
+	// its transports via up/down instead and rejects net.
+	Net string `json:"net"`
 }
 
 func (c *NowhereEndpointConfig) Build() (*nowhere.Endpoint, error) {
 	if c == nil || c.Address == nil || c.Address.Address == nil || c.Port == 0 || c.Password == "" {
 		return nil, errors.New("nowhere: endpoint requires address, port, and password")
 	}
-	version, err := nowhereConfigVersion(c.Version)
-	if err != nil {
-		return nil, err
-	}
-	if version == 3 {
+	stack := nowhere.StackFromALPN(c.ALPN)
+	if stack == nowhere.StackNw3 {
 		// The Nowhere 3 key is exactly 32 lowercase hex characters; the nw2
-		// admission window below would also accept longer keys nw3 rejects.
+		// admission rules below would also accept longer keys nw3 rejects.
 		if err := wire.ValidateServiceKey(c.Password); err != nil {
-			return nil, errors.New("nowhere: version 3 key").Base(err)
+			return nil, errors.New("nowhere: Nowhere 3 key").Base(err)
 		}
 	} else {
 		for _, mode := range []string{c.Up, c.Down} {
@@ -77,30 +78,32 @@ func (c *NowhereEndpointConfig) Build() (*nowhere.Endpoint, error) {
 		Alpn:          c.ALPN,
 		Dial4:         c.Dial4,
 		Dial6:         c.Dial6,
-		Version:       version,
-		Carrier:       c.Carrier,
+		Net:           c.Net,
 	}
 	return endpoint, nil
 }
 
 type NowhereServerConfig struct {
-	Password     string                 `json:"password"`
-	Networks     []string               `json:"networks"`
-	Morph        *bool                  `json:"morph"`
-	Certificates []*TLSCertConfig       `json:"certificates"`
-	ALPN         string                 `json:"alpn"`
-	Next         *NowhereEndpointConfig `json:"next"`
-	UserLevel    uint32                 `json:"userLevel"`
-	// Version selects the protocol stack: 0 or 2 is Nowhere 2 (nw2), 3 is
-	// Nowhere 3 (nw3), which serves ALPN nw3 only and rejects the nw2-only
-	// fields above.
-	Version int32 `json:"version"`
-	// Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or
-	// quic. Empty means tcp.
-	Carrier string `json:"carrier"`
+	Password     string           `json:"password"`
+	Networks     []string         `json:"networks"`
+	Morph        *bool            `json:"morph"`
+	Certificates []*TLSCertConfig `json:"certificates"`
+	// ALPN selects the protocol stack: an empty value or "nw3" runs Nowhere 3,
+	// which serves ALPN nw3 only, selects its single transport via net, and
+	// rejects the nw2-only fields above. Any other value keeps the legacy
+	// Nowhere 2 stack, which keeps next chaining and the network list
+	// meaningful and negotiates the ALPN above.
+	ALPN      string                 `json:"alpn"`
+	Next      *NowhereEndpointConfig `json:"next"`
+	UserLevel uint32                 `json:"userLevel"`
+	// Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+	// (QUIC). Empty means tcp. It is a Nowhere 3 field: the nw2 stack selects
+	// its transports via networks instead and rejects net.
+	Net string `json:"net"`
 	// Egress turns the Nowhere 3 Portal into an exit bridge: it accepts one
-	// Egress registration over the quic carrier and forwards every
-	// authenticated flow to that exit instead of the local router.
+	// Egress registration over the QUIC transport and forwards every
+	// authenticated flow to that exit instead of the local router. Requires
+	// net udp.
 	Egress bool `json:"egress"`
 }
 
@@ -108,13 +111,10 @@ func (c *NowhereServerConfig) Build() (proto.Message, error) {
 	if c == nil || c.Password == "" {
 		return nil, errors.New("nowhere: missing password")
 	}
-	version, err := nowhereConfigVersion(c.Version)
-	if err != nil {
-		return nil, err
-	}
-	if version == 3 {
+	stack := nowhere.StackFromALPN(c.ALPN)
+	if stack == nowhere.StackNw3 {
 		if err := wire.ValidateServiceKey(c.Password); err != nil {
-			return nil, errors.New("nowhere: version 3 portal key").Base(err)
+			return nil, errors.New("nowhere: Nowhere 3 portal key").Base(err)
 		}
 	} else if err := validatePortalKey("Portal listener", c.Password); err != nil {
 		return nil, err
@@ -125,8 +125,7 @@ func (c *NowhereServerConfig) Build() (proto.Message, error) {
 		Morph:     c.Morph,
 		Alpn:      c.ALPN,
 		UserLevel: c.UserLevel,
-		Version:   version,
-		Carrier:   c.Carrier,
+		Net:       c.Net,
 		Egress:    c.Egress,
 	}
 	for _, cert := range c.Certificates {
@@ -140,8 +139,8 @@ func (c *NowhereServerConfig) Build() (proto.Message, error) {
 		})
 	}
 	if c.Next != nil {
-		if version == 3 {
-			return nil, errors.New("nowhere: version 3 does not support next chaining")
+		if stack == nowhere.StackNw3 {
+			return nil, errors.New("nowhere: Nowhere 3 does not support next chaining")
 		}
 		if err := validatePortalKey("Portal next endpoint", c.Next.Password); err != nil {
 			return nil, err
@@ -156,7 +155,7 @@ func (c *NowhereServerConfig) Build() (proto.Message, error) {
 }
 
 // NowhereEgressConfig is the Nowhere 3 Egress client. It never listens: it dials
-// a Nowhere 3 Portal over the quic carrier, registers as the Portal's single
+// a Nowhere 3 Portal over the QUIC transport, registers as the Portal's single
 // exit, and serves the flows the Portal opens through the local router.
 type NowhereEgressConfig struct {
 	Address       *Address `json:"address"`
@@ -175,7 +174,7 @@ func (c *NowhereEgressConfig) Build() (proto.Message, error) {
 		return nil, errors.New("nowhere: egress requires address, port, and password")
 	}
 	if err := wire.ValidateServiceKey(c.Password); err != nil {
-		return nil, errors.New("nowhere: version 3 egress key").Base(err)
+		return nil, errors.New("nowhere: Nowhere 3 egress key").Base(err)
 	}
 	return &nowhere.EgressConfig{
 		Address:       c.Address.String(),
@@ -186,19 +185,6 @@ func (c *NowhereEgressConfig) Build() (proto.Message, error) {
 		AllowInsecure: c.AllowInsecure,
 		Morph:         c.Morph,
 	}, nil
-}
-
-// nowhereConfigVersion validates the raw version option. Zero means 2, which
-// keeps every pre-nw3 configuration working unchanged.
-func nowhereConfigVersion(raw int32) (int32, error) {
-	switch raw {
-	case 0, 2:
-		return 2, nil
-	case 3:
-		return 3, nil
-	default:
-		return 0, errors.New("nowhere: version must be 2 or 3, got ", raw)
-	}
 }
 
 // Portal key admission bounds: the Nowhere 2.2 Portal shared key is 32-64

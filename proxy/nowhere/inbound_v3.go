@@ -21,18 +21,18 @@ import (
 	"github.com/xtls/xray-core/transport/internet/stat"
 )
 
-// ServerV3 is the Nowhere 3 Portal. It serves one carrier with ALPN nw3 and
+// ServerV3 is the Nowhere 3 Portal. It serves one transport with ALPN nw3 and
 // TLS 1.3, applies the Nowhere 3 Morph transform when enabled, and either
 // routes authenticated flows through the Xray dispatcher or bridges them to a
-// single registered Egress exit (egress mode). The TCP carrier is fed by Xray's
-// listener through Process; the QUIC carrier listens on the same address
-// because Nowhere datagrams cannot be demuxed per source.
+// single registered Egress exit (egress mode). The TCP transport is fed by
+// Xray's listener through Process; the QUIC transport listens on the same
+// address because Nowhere datagrams cannot be demuxed per source.
 type ServerV3 struct {
 	config    *ServerConfig
 	ctx       context.Context
 	portal    *portal.Server
 	tlsConfig *tls.Config
-	carrier   string
+	net       string
 	morph     bool
 	sharedKey string
 	userLevel uint32
@@ -52,14 +52,10 @@ type ServerV3 struct {
 }
 
 // NewServerV3 builds the Nowhere 3 Portal inbound. The nw2 inbound keeps its
-// own constructor; NewServer dispatches between the two.
+// own constructor; NewServer dispatches between the two by ALPN.
 func NewServerV3(ctx context.Context, config *ServerConfig) (*ServerV3, error) {
-	version, err := resolveNowhereVersion(config.GetVersion())
-	if err != nil {
-		return nil, err
-	}
-	if version != nowhereVersion3 {
-		return nil, errors.New("nowhere: version 3 constructor called with version ", version)
+	if StackFromALPN(config.GetAlpn()) != StackNw3 {
+		return nil, errors.New("nowhere: Nowhere 3 constructor called with the Nowhere 2 stack")
 	}
 	if config.GetPassword() == "" {
 		return nil, errors.New("nowhere: missing password")
@@ -67,17 +63,17 @@ func NewServerV3(ctx context.Context, config *ServerConfig) (*ServerV3, error) {
 	if err := validateNowhereV3Server(config); err != nil {
 		return nil, err
 	}
-	carrier, err := nowhereV3Carrier(config.GetCarrier())
+	net, err := nowhereV3Net(config.GetNet())
 	if err != nil {
 		return nil, err
 	}
-	if err := validateNowhereV3Networks(config.GetNetworks(), carrier); err != nil {
+	if err := validateNowhereV3Networks(config.GetNetworks(), net); err != nil {
 		return nil, err
 	}
-	// The Egress registration handshake only exists on the QUIC carrier, so an
-	// exit bridge cannot be served over the TCP carrier.
-	if config.GetEgress() && carrier != nowhereV3CarrierQUIC {
-		return nil, errors.New("nowhere: version 3 egress mode requires the quic carrier")
+	// The Egress registration handshake only exists on the QUIC transport, so an
+	// exit bridge cannot be served over the TCP transport.
+	if config.GetEgress() && net != nowhereV3NetUDP {
+		return nil, errors.New("nowhere: egress mode requires net udp")
 	}
 	if err := wire.ValidateServiceKey(config.GetPassword()); err != nil {
 		return nil, errors.New("nowhere: portal key").Base(err)
@@ -91,7 +87,7 @@ func NewServerV3(ctx context.Context, config *ServerConfig) (*ServerV3, error) {
 		return nil, err
 	}
 	tlsConfig := buildNowhereV3ServerTLS(certs)
-	morphOn := resolveNowhereMorph(config.Morph, nowhereVersion3)
+	morphOn := resolveNowhereMorph(config.Morph, StackNw3)
 	var upstream portal.Upstream
 	if !config.GetEgress() {
 		v := core.MustFromContext(ctx)
@@ -126,7 +122,7 @@ func NewServerV3(ctx context.Context, config *ServerConfig) (*ServerV3, error) {
 		ctx:       ctx,
 		portal:    portalServer,
 		tlsConfig: tlsConfig,
-		carrier:   carrier,
+		net:       net,
 		morph:     morphOn,
 		sharedKey: config.GetPassword(),
 		userLevel: config.GetUserLevel(),
@@ -146,16 +142,16 @@ func NewServerV3(ctx context.Context, config *ServerConfig) (*ServerV3, error) {
 }
 
 func (s *ServerV3) Network() []xnet.Network {
-	if s.carrier == nowhereV3CarrierTCP {
+	if s.net == nowhereV3NetTCP {
 		return []xnet.Network{xnet.Network_TCP}
 	}
-	// The QUIC carrier owns its own UDP socket, so Xray registers no worker.
+	// The QUIC transport owns its own UDP socket, so Xray registers no worker.
 	return nil
 }
 
 func (s *ServerV3) Process(ctx context.Context, network xnet.Network, conn stat.Connection, _ routing.Dispatcher) error {
-	if network != xnet.Network_TCP || s.carrier != nowhereV3CarrierTCP {
-		return errors.New("nowhere: tcp carrier is not enabled")
+	if network != xnet.Network_TCP || s.net != nowhereV3NetTCP {
+		return errors.New("nowhere: tcp transport is not enabled")
 	}
 	if inbound := session.InboundFromContext(ctx); inbound != nil {
 		inbound.Name = "nowhere"
@@ -195,14 +191,14 @@ func (s *ServerV3) Start() error {
 	}
 	s.started = true
 	logNowhereV3PortalFingerprint(core.ToBackgroundDetachedContext(s.ctx), s.tlsConfig)
-	if s.carrier == nowhereV3CarrierTCP {
+	if s.net == nowhereV3NetTCP {
 		go func() {
 			_ = s.portal.Serve(s.ctx, &pushedListener{addr: s.tcpListenAddr(), conns: s.tcpConns, closed: s.closing})
 		}()
 		return nil
 	}
 	if s.listenPort == 0 {
-		return errors.New("nowhere: quic carrier requires an inbound listen port")
+		return errors.New("nowhere: quic transport requires an inbound listen port")
 	}
 	packetConn, err := udpCarrierSocket(core.ToBackgroundDetachedContext(s.ctx), udpListenAddr(s.listenAddr, s.listenPort), s.sockopt)
 	if err != nil {
@@ -245,8 +241,8 @@ func (s *ServerV3) tcpListenAddr() stdnet.Addr {
 	return &stdnet.TCPAddr{IP: ip, Port: int(s.listenPort)}
 }
 
-// pushedListener is the net.Listener view of the TCP carrier: connections Xray
-// accepted are queued by Process and drained by the vendored Portal.
+// pushedListener is the net.Listener view of the TCP transport: connections
+// Xray accepted are queued by Process and drained by the vendored Portal.
 type pushedListener struct {
 	addr   stdnet.Addr
 	conns  chan stdnet.Conn

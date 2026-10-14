@@ -69,7 +69,7 @@ func NewEgressServer(ctx context.Context, config *EgressConfig) (*EgressServer, 
 	if err != nil {
 		return nil, err
 	}
-	morphOn := resolveNowhereMorph(config.Morph, nowhereVersion3)
+	morphOn := resolveNowhereMorph(config.Morph, StackNw3)
 	var morphKeys *morph.Keys
 	if morphOn {
 		keys := nowhereV3MorphKeys(config.GetPassword())

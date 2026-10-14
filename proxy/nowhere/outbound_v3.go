@@ -22,10 +22,10 @@ import (
 	"github.com/xtls/xray-core/transport/internet"
 )
 
-// ClientV3 is the Nowhere 3 Vector client. One endpoint speaks one carrier
+// ClientV3 is the Nowhere 3 Vector client. One endpoint speaks one transport
 // toward one Portal; the vendored Vector performs the nw3 handshake on the
-// first flow (TLS carrier) or on the first dial (QUIC carrier) and multiplexes
-// every later flow over the same session.
+// first flow (TCP transport) or on the first dial (UDP transport) and
+// multiplexes every later flow over the same session.
 type ClientV3 struct {
 	config    *ClientConfig
 	policy    policy.Manager
@@ -38,14 +38,10 @@ type ClientV3 struct {
 }
 
 // NewClientV3 builds the Nowhere 3 outbound. The nw2 outbound keeps its own
-// constructor; NewClient dispatches between the two.
+// constructor; NewClient dispatches between the two by ALPN.
 func NewClientV3(ctx context.Context, config *ClientConfig) (*ClientV3, error) {
-	version, err := resolveNowhereVersion(config.GetEndpoint().GetVersion())
-	if err != nil {
-		return nil, err
-	}
-	if version != nowhereVersion3 {
-		return nil, errors.New("nowhere: version 3 constructor called with version ", version)
+	if StackFromALPN(config.GetEndpoint().GetAlpn()) != StackNw3 {
+		return nil, errors.New("nowhere: Nowhere 3 constructor called with the Nowhere 2 stack")
 	}
 	ep := config.GetEndpoint()
 	if ep == nil || ep.GetAddress() == "" || ep.GetPort() == 0 || ep.GetPassword() == "" {
@@ -54,7 +50,7 @@ func NewClientV3(ctx context.Context, config *ClientConfig) (*ClientV3, error) {
 	if err := validateNowhereV3Endpoint(ep); err != nil {
 		return nil, err
 	}
-	if _, err := nowhereV3Carrier(ep.GetCarrier()); err != nil {
+	if _, err := nowhereV3Net(ep.GetNet()); err != nil {
 		return nil, err
 	}
 	if err := wire.ValidateServiceKey(ep.GetPassword()); err != nil {
@@ -90,7 +86,7 @@ func (c *ClientV3) ensure(dialer internet.Dialer) (*vector.Client, error) {
 		return c.client, nil
 	}
 	ep := c.config.GetEndpoint()
-	carrier, err := nowhereV3Carrier(ep.GetCarrier())
+	net, err := nowhereV3Net(ep.GetNet())
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +94,7 @@ func (c *ClientV3) ensure(dialer internet.Dialer) (*vector.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	morphOn := resolveNowhereMorph(ep.Morph, nowhereVersion3)
+	morphOn := resolveNowhereMorph(ep.Morph, StackNw3)
 	var morphKeys *morph.Keys
 	if morphOn {
 		keys := nowhereV3MorphKeys(ep.GetPassword())
@@ -112,7 +108,7 @@ func (c *ClientV3) ensure(dialer internet.Dialer) (*vector.Client, error) {
 		TLS:        tlsConfig,
 	}
 	carrierDialer := xrayDialer{dialer: dialer, sockopt: c.sockopt}
-	if carrier == nowhereV3CarrierTCP {
+	if net == nowhereV3NetTCP {
 		cfg.DialTCP = func(dialCtx context.Context, address string) (stdnet.Conn, error) {
 			return carrierDialer.DialTCP(dialCtx, address)
 		}

@@ -14,6 +14,7 @@ func TestNowhereJSONConfig(t *testing.T) {
 		"address": "example.com",
 		"port": 443,
 		"password": "secret",
+		"alpn": "nw2",
 		"up": "tcp",
 		"down": "udp",
 		"mux": true,
@@ -36,7 +37,7 @@ func TestNowhereJSONConfig(t *testing.T) {
 		t.Fatalf("policy = up %s down %s mux %v", config.Endpoint.GetUp(), config.Endpoint.GetDown(), config.Endpoint.GetMux())
 	}
 
-	serverRaw := []byte(`{"password":"0123456789abcdef0123456789abcdef","networks":["tcp"],"morph":true}`)
+	serverRaw := []byte(`{"password":"0123456789abcdef0123456789abcdef","alpn":"nw2","networks":["tcp"],"morph":true}`)
 	server := new(conf.NowhereServerConfig)
 	if err := json.Unmarshal(serverRaw, server); err != nil {
 		t.Fatal(err)
@@ -50,8 +51,56 @@ func TestNowhereJSONConfig(t *testing.T) {
 	}
 }
 
+// TestNowhereJSONConfigDefaultsToNw3 covers the new default: an endpoint with
+// no alpn runs Nowhere 3, so the strict 32-character lowercase-hex key rule
+// applies and an explicit "nw3" behaves the same.
+func TestNowhereJSONConfigDefaultsToNw3(t *testing.T) {
+	for name, raw := range map[string]string{
+		"omitted":  `{"address":"example.com","port":443,"password":"` + nw3Key + `"}`,
+		"explicit": `{"address":"example.com","port":443,"password":"` + nw3Key + `","alpn":"nw3"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := new(conf.NowhereClientConfig)
+			if err := json.Unmarshal([]byte(raw), client); err != nil {
+				t.Fatal(err)
+			}
+			built, err := client.Build()
+			if err != nil {
+				t.Fatalf("nw3 endpoint rejected: %v", err)
+			}
+			if got := built.(*nowhere.ClientConfig).GetEndpoint().GetAlpn(); got != "" && got != "nw3" {
+				t.Fatalf("alpn = %q", got)
+			}
+			// net is a Nowhere 3 field and must reach the protobuf message.
+			withNet := new(conf.NowhereClientConfig)
+			if err := json.Unmarshal([]byte(`{"address":"example.com","port":443,"password":"`+nw3Key+`","net":"udp"}`), withNet); err != nil {
+				t.Fatal(err)
+			}
+			netBuilt, err := withNet.Build()
+			if err != nil {
+				t.Fatalf("nw3 endpoint with net rejected: %v", err)
+			}
+			if got := netBuilt.(*nowhere.ClientConfig).GetEndpoint().GetNet(); got != "udp" {
+				t.Fatalf("net = %q", got)
+			}
+		})
+	}
+	// The lenient nw2 secret is not a Nowhere 3 key, so the default stack
+	// rejects it.
+	client := new(conf.NowhereClientConfig)
+	if err := json.Unmarshal([]byte(`{"address":"example.com","port":443,"password":"secret"}`), client); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Build(); err == nil {
+		t.Fatal("expected nw3 key rejection")
+	}
+}
+
+// nw3Key is a valid Nowhere 3 service key: exactly 32 lowercase hex characters.
+const nw3Key = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+
 func TestNowhereJSONConfigRejectsMixCarrier(t *testing.T) {
-	raw := []byte(`{"address":"example.com","port":443,"password":"secret","up":"tcp","down":"mix"}`)
+	raw := []byte(`{"address":"example.com","port":443,"password":"secret","alpn":"nw2","up":"tcp","down":"mix"}`)
 	client := new(conf.NowhereClientConfig)
 	if err := json.Unmarshal(raw, client); err != nil {
 		t.Fatal(err)
@@ -74,7 +123,7 @@ func TestNowhereJSONConfigPortalKeyAdmission(t *testing.T) {
 	}
 	for _, key := range accepted {
 		server := new(conf.NowhereServerConfig)
-		if err := json.Unmarshal([]byte(`{"password":"`+key+`"}`), server); err != nil {
+		if err := json.Unmarshal([]byte(`{"password":"`+key+`","alpn":"nw2"}`), server); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := server.Build(); err != nil {
@@ -94,7 +143,7 @@ func TestNowhereJSONConfigPortalKeyAdmission(t *testing.T) {
 	}
 	for _, tc := range rejected {
 		server := new(conf.NowhereServerConfig)
-		if err := json.Unmarshal([]byte(`{"password":"`+tc.key+`"}`), server); err != nil {
+		if err := json.Unmarshal([]byte(`{"password":"`+tc.key+`","alpn":"nw2"}`), server); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := server.Build(); err == nil {
@@ -106,6 +155,7 @@ func TestNowhereJSONConfigPortalKeyAdmission(t *testing.T) {
 func TestNowhereJSONConfigNextHopKeyAdmission(t *testing.T) {
 	raw := []byte(`{
 		"password":"` + portalKey + `",
+		"alpn":"nw2",
 		"networks":["tcp"],
 		"next":{"address":"example.com","port":443,"password":"secret"}
 	}`)
@@ -119,6 +169,7 @@ func TestNowhereJSONConfigNextHopKeyAdmission(t *testing.T) {
 
 	raw = []byte(`{
 		"password":"` + portalKey + `",
+		"alpn":"nw2",
 		"networks":["tcp"],
 		"next":{"address":"example.com","port":443,"password":"` + portalKey + `"}
 	}`)
@@ -136,7 +187,7 @@ func TestNowhereJSONConfigNextHopKeyAdmission(t *testing.T) {
 }
 
 func TestNowhereJSONConfigClientKeyStaysLenient(t *testing.T) {
-	raw := []byte(`{"address":"example.com","port":443,"password":"secret","up":"tcp","down":"tcp"}`)
+	raw := []byte(`{"address":"example.com","port":443,"password":"secret","alpn":"nw2","up":"tcp","down":"tcp"}`)
 	client := new(conf.NowhereClientConfig)
 	if err := json.Unmarshal(raw, client); err != nil {
 		t.Fatal(err)
@@ -170,7 +221,7 @@ func TestNowhereJSONConfigDialPolicy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			raw := []byte(`{"address":"example.com","port":443,"password":"secret","up":"tcp","down":"tcp"`)
+			raw := []byte(`{"address":"example.com","port":443,"password":"secret","alpn":"nw2","up":"tcp","down":"tcp"`)
 			if tc.dial4 != "" {
 				raw = append(raw, []byte(`,"dial4":"`+tc.dial4+`"`)...)
 			}

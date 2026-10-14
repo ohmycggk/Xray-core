@@ -22,111 +22,132 @@ import (
 	"github.com/xtls/xray-core/transport"
 )
 
-// nowhereVersion2 and nowhereVersion3 select the protocol stack of one endpoint.
-// The two stacks share no handshake: a single inbound/outbound runs exactly one
-// version, and nw2-only fields are rejected when version 3 is selected.
+// Stack selects the Nowhere protocol stack of one endpoint. The stack is
+// derived from the single configured ALPN: an empty or nw3 ALPN selects
+// Nowhere 3 (the default), any other ALPN selects the legacy Nowhere 2 stack
+// kept for compatibility with pre-nw3 peers. The two stacks share no handshake:
+// a single inbound/outbound runs exactly one stack, and the fields of the other
+// stack are rejected.
+type Stack int
+
 const (
-	nowhereVersion2 = 2
-	nowhereVersion3 = 3
+	StackNw2 Stack = iota
+	StackNw3
 )
 
-// resolveNowhereVersion maps the raw version option to a stack. Zero means 2,
-// which keeps every pre-nw3 configuration working unchanged.
-func resolveNowhereVersion(raw int32) (int, error) {
-	switch raw {
-	case 0, nowhereVersion2:
-		return nowhereVersion2, nil
-	case nowhereVersion3:
-		return nowhereVersion3, nil
-	default:
-		return 0, errors.New("nowhere: version must be 2 or 3, got ", raw)
+// StackFromALPN maps the configured ALPN to a stack. An empty ALPN, or nw3,
+// means Nowhere 3, which keeps nw3 the default for every configuration that
+// does not opt into the legacy stack. Any other value selects Nowhere 2, which
+// preserves existing nw2 configurations that use a custom ALPN.
+func StackFromALPN(alpn string) Stack {
+	if alpn == "" || alpn == wire.ALPN {
+		return StackNw3
 	}
+	return StackNw2
 }
 
-// resolveNowhereMorph applies the per-version Morph default: Nowhere 2 leaves
-// the transform off, Nowhere 3 turns it on. An explicit value always wins.
-func resolveNowhereMorph(raw *bool, version int) bool {
+// resolveNowhereMorph applies the per-stack Morph default: Nowhere 2 leaves the
+// transform off, Nowhere 3 turns it on. An explicit value always wins.
+func resolveNowhereMorph(raw *bool, stack Stack) bool {
 	if raw != nil {
 		return *raw
 	}
-	return version == nowhereVersion3
+	return stack == StackNw3
 }
 
-// nowhereV3CarrierTCP and nowhereV3CarrierQUIC are the two Nowhere 3
-// transports. Nowhere 3 speaks exactly one of them per endpoint.
+// nowhereV3NetTCP and nowhereV3NetUDP are the two Nowhere 3 transports. Nowhere
+// 3 speaks exactly one of them per endpoint: tcp is TLS over TCP, udp is QUIC.
 const (
-	nowhereV3CarrierTCP  = "tcp"
-	nowhereV3CarrierQUIC = "quic"
+	nowhereV3NetTCP = "tcp"
+	nowhereV3NetUDP = "udp"
 )
 
-// nowhereV3Carrier resolves the single Nowhere 3 carrier. Nowhere 3 uses
-// exactly one transport: tcp (TLS over TCP) or quic. Empty means tcp.
-func nowhereV3Carrier(raw string) (string, error) {
+// nowhereV3Net resolves the single Nowhere 3 transport. Nowhere 3 uses exactly
+// one: tcp (TLS over TCP) or udp (QUIC). Empty means tcp.
+func nowhereV3Net(raw string) (string, error) {
 	switch raw {
-	case "", nowhereV3CarrierTCP:
-		return nowhereV3CarrierTCP, nil
-	case nowhereV3CarrierQUIC:
-		return nowhereV3CarrierQUIC, nil
+	case "", nowhereV3NetTCP:
+		return nowhereV3NetTCP, nil
+	case nowhereV3NetUDP:
+		return nowhereV3NetUDP, nil
 	default:
-		return "", errors.New("nowhere: version 3 carrier must be tcp or quic, got ", raw)
+		return "", errors.New("nowhere: net must be tcp or udp, got ", raw)
 	}
 }
 
 // validateNowhereV3Endpoint rejects the nw2-only endpoint fields Nowhere 3
-// cannot honor: the vendored Vector speaks one carrier with fixed pooling, so
-// up/down, the mux toggle, the pool size, the negotiated ALPN list and the
-// dual-stack dial policy have no Nowhere 3 meaning.
+// cannot honor: the vendored Vector speaks one transport with fixed pooling, so
+// up/down, the mux toggle, the pool size and the dual-stack dial policy have no
+// Nowhere 3 meaning. The ALPN is not checked here: it already selected this
+// stack, so only an empty value or nw3 can reach it.
 func validateNowhereV3Endpoint(ep *Endpoint) error {
 	if ep.GetUp() != "" || ep.GetDown() != "" {
-		return errors.New("nowhere: version 3 uses one carrier; remove up and down")
+		return errors.New("nowhere: Nowhere 3 uses one transport; remove up and down")
 	}
 	if ep.GetMux() {
-		return errors.New("nowhere: version 3 has no multiplexing; remove mux")
+		return errors.New("nowhere: Nowhere 3 has no multiplexing; remove mux")
 	}
 	if ep.GetPool() != 0 {
-		return errors.New("nowhere: version 3 has no connection pool; remove pool")
-	}
-	if ep.GetAlpn() != "" {
-		return errors.New("nowhere: version 3 fixes ALPN to ", wire.ALPN, "; remove alpn")
+		return errors.New("nowhere: Nowhere 3 has no connection pool; remove pool")
 	}
 	if ep.GetDial4() != "" || ep.GetDial6() != "" {
-		return errors.New("nowhere: version 3 has no dial4/dial6 source binding; remove them")
+		return errors.New("nowhere: Nowhere 3 has no dial4/dial6 source binding; remove them")
+	}
+	return nil
+}
+
+// validateNowhereNw2Endpoint rejects the Nowhere 3-only endpoint fields on the
+// legacy nw2 stack, which selects its transports via up/down instead.
+func validateNowhereNw2Endpoint(ep *Endpoint) error {
+	if ep.GetNet() != "" {
+		return errors.New("nowhere: net is a Nowhere 3 field; remove it or select the Nowhere 3 stack with alpn \"nw3\"")
 	}
 	return nil
 }
 
 // validateNowhereV3Server rejects the nw2-only server fields: the vendored
 // Portal owns its own admission limits and speaks only nw3, and Nowhere 3 has
-// no native Portal chaining.
+// no native Portal chaining. The ALPN is not checked here: it already selected
+// this stack.
 func validateNowhereV3Server(config *ServerConfig) error {
 	if config.GetNext() != nil {
-		return errors.New("nowhere: version 3 does not support next chaining")
+		return errors.New("nowhere: Nowhere 3 does not support next chaining")
 	}
-	if config.GetAlpn() != "" {
-		return errors.New("nowhere: version 3 fixes ALPN to ", wire.ALPN, "; remove alpn")
+	return nil
+}
+
+// validateNowhereNw2Server rejects the Nowhere 3-only server fields on the
+// legacy nw2 stack: net selects the single nw3 transport, and the egress
+// bridge only exists on the nw3 Portal.
+func validateNowhereNw2Server(config *ServerConfig) error {
+	if config.GetNet() != "" {
+		return errors.New("nowhere: net is a Nowhere 3 field; remove it or select the Nowhere 3 stack with alpn \"nw3\"")
+	}
+	if config.GetEgress() {
+		return errors.New("nowhere: egress is a Nowhere 3 field; remove it or select the Nowhere 3 stack with alpn \"nw3\"")
 	}
 	return nil
 }
 
 // validateNowhereV3Networks keeps the network list consistent with the single
-// Nowhere 3 carrier: the carrier already decides TCP or UDP, so an explicit
+// Nowhere 3 transport: the net already decides TCP or UDP, so an explicit
 // network list may only name that one transport.
-func validateNowhereV3Networks(networks []string, carrier string) error {
+func validateNowhereV3Networks(networks []string, net string) error {
 	if len(networks) == 0 {
 		return nil
 	}
-	expected := "tcp"
-	if carrier == nowhereV3CarrierQUIC {
-		expected = "udp"
+	expected := nowhereV3NetTCP
+	if net == nowhereV3NetUDP {
+		expected = nowhereV3NetUDP
 	}
 	if len(networks) != 1 || networks[0] != expected {
-		return errors.New("nowhere: version 3 carrier ", carrier, " implies network ", expected, "; remove networks or set it to ", expected)
+		return errors.New("nowhere: Nowhere 3 net ", net, " implies network ", expected, "; remove networks or set it to ", expected)
 	}
 	return nil
 }
 
 // buildNowhereV3ClientTLS produces the standard-library client config the
-// vendored Vector uses for the TLS carrier and for QUIC dials. Trust follows
+// vendored Vector uses for the TLS transport and for QUIC dials. Trust follows
 // Nowhere 3: system roots plus the endpoint host name by default, pin overrides
 // everything, and the explicit insecure escape hatch skips verification.
 func buildNowhereV3ClientTLS(ep *Endpoint) (*tls.Config, error) {
@@ -154,7 +175,7 @@ func buildNowhereV3ClientTLS(ep *Endpoint) (*tls.Config, error) {
 }
 
 // buildNowhereV3ServerTLS produces the standard-library server config the
-// vendored Portal uses for its own handshakes on both carriers.
+// vendored Portal uses for its own handshakes on both transports.
 func buildNowhereV3ServerTLS(certs []tls.Certificate) *tls.Config {
 	cfg := serverTLSConfig(certs, wire.ALPN)
 	// The vendored stack performs its own handshakes, so resumption stays off
@@ -181,7 +202,7 @@ func logNowhereV3PortalFingerprint(ctx context.Context, tlsConfig *tls.Config) {
 	errors.LogInfo(ctx, "nowhere TLS certificate SHA-256 fingerprint: ", nw2wire.LeafCertificateSHA256Hex(leaf.Raw))
 }
 
-// nowhereV3MorphKeys derives the Nowhere 3 Morph keys. The TCP carrier is
+// nowhereV3MorphKeys derives the Nowhere 3 Morph keys. The TCP transport is
 // wrapped inside the vendored Vector/Portal, so only QUIC dials and QUIC
 // listeners need this host-side derivation.
 func nowhereV3MorphKeys(password string) morph.Keys {

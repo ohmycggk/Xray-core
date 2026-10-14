@@ -44,15 +44,15 @@ type Server struct {
 	closeErr  error
 }
 
-// NewServer builds the Nowhere inbound. Version 3 endpoints are served by the
-// vendored Portal (ServerV3); every other version keeps the nw2 stack unchanged.
+// NewServer builds the Nowhere inbound. The ALPN selects the stack: Nowhere 3
+// endpoints are served by the vendored Portal (ServerV3); every other ALPN
+// keeps the legacy nw2 stack unchanged.
 func NewServer(ctx context.Context, config *ServerConfig) (interface{}, error) {
-	version, err := resolveNowhereVersion(config.GetVersion())
-	if err != nil {
-		return nil, err
-	}
-	if version == nowhereVersion3 {
+	if StackFromALPN(config.GetAlpn()) == StackNw3 {
 		return NewServerV3(ctx, config)
+	}
+	if err := validateNowhereNw2Server(config); err != nil {
+		return nil, err
 	}
 	if config == nil || config.Password == "" {
 		return nil, errors.New("nowhere: missing password")

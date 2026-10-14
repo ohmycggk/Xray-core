@@ -142,6 +142,7 @@ func TestNowhereXrayOutbound(t *testing.T) {
 				Address:       "127.0.0.1",
 				Port:          uint32(serverPort),
 				Password:      "outbound-secret",
+				Alpn:          "nw2",
 				Up:            "tcp",
 				Down:          "tcp",
 				AllowInsecure: true,
@@ -193,6 +194,7 @@ func TestNowhereXrayOutboundUDP(t *testing.T) {
 				Address:       "127.0.0.1",
 				Port:          uint32(serverPort),
 				Password:      "udp-outbound",
+				Alpn:          "nw2",
 				Up:            "udp",
 				Down:          "udp",
 				AllowInsecure: true,
@@ -271,6 +273,7 @@ func startPortal(t *testing.T, port int, password string, networks []string, mor
 			}),
 			ProxySettings: serial.ToTypedMessage(&ServerConfig{
 				Password: password,
+				Alpn:     "nw2",
 				Networks: networks,
 				Morph:    &morph,
 				Next:     next,
