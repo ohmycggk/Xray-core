@@ -237,7 +237,7 @@ func openBundle(ep *Endpoint, dial carrierDialer) (*bundle.CarrierBundle, error)
 		Mux:         muxMode,
 	}
 	var morphKey []byte
-	if ep.Morph {
+	if ep.GetMorph() {
 		morphKey = []byte(ep.Password)
 	}
 	if needsTCP {
@@ -254,13 +254,13 @@ func openBundle(ep *Endpoint, dial carrierDialer) (*bundle.CarrierBundle, error)
 	}
 	if needsQUIC {
 		var keys *morphKeys
-		if ep.Morph {
+		if ep.GetMorph() {
 			derived := deriveMorph(ep.Password)
 			keys = &derived
 		}
 		opts.QUIC = newQUICBackend(func(ctx context.Context) (stdnet.PacketConn, stdnet.Addr, error) {
 			return dial.DialPacket(ctx, addr)
-		}, tlsConfig, quicSettings(false, ep.Morph), keys)
+		}, tlsConfig, quicSettings(false, ep.GetMorph()), keys)
 	}
 	return bundle.NewCarrierBundle(opts)
 }

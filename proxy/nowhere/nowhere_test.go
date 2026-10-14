@@ -272,7 +272,7 @@ func startPortal(t *testing.T, port int, password string, networks []string, mor
 			ProxySettings: serial.ToTypedMessage(&ServerConfig{
 				Password: password,
 				Networks: networks,
-				Morph:    morph,
+				Morph:    &morph,
 				Next:     next,
 			}),
 		}},
@@ -327,7 +327,7 @@ func testBundle(t *testing.T, port int, password, up, down string, mux, morph bo
 		Up:            up,
 		Down:          down,
 		Mux:           mux,
-		Morph:         morph,
+		Morph:         &morph,
 		AllowInsecure: true,
 	}, testPacketDialer{})
 	if err != nil {

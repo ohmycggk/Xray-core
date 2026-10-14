@@ -21,19 +21,20 @@ import (
 
 var (
 	inboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
-		"tunnel":        func() interface{} { return new(DokodemoConfig) },
-		"dokodemo-door": func() interface{} { return new(DokodemoConfig) },
-		"http":          func() interface{} { return new(HTTPServerConfig) },
-		"shadowsocks":   func() interface{} { return new(ShadowsocksServerConfig) },
-		"mixed":         func() interface{} { return new(SocksServerConfig) },
-		"socks":         func() interface{} { return new(SocksServerConfig) },
-		"vless":         func() interface{} { return new(VLessInboundConfig) },
-		"vmess":         func() interface{} { return new(VMessInboundConfig) },
-		"trojan":        func() interface{} { return new(TrojanServerConfig) },
-		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
-		"hysteria":      func() interface{} { return new(HysteriaServerConfig) },
-		"nowhere":       func() interface{} { return new(NowhereServerConfig) },
-		"tun":           func() interface{} { return new(TunConfig) },
+		"tunnel":         func() interface{} { return new(DokodemoConfig) },
+		"dokodemo-door":  func() interface{} { return new(DokodemoConfig) },
+		"http":           func() interface{} { return new(HTTPServerConfig) },
+		"shadowsocks":    func() interface{} { return new(ShadowsocksServerConfig) },
+		"mixed":          func() interface{} { return new(SocksServerConfig) },
+		"socks":          func() interface{} { return new(SocksServerConfig) },
+		"vless":          func() interface{} { return new(VLessInboundConfig) },
+		"vmess":          func() interface{} { return new(VMessInboundConfig) },
+		"trojan":         func() interface{} { return new(TrojanServerConfig) },
+		"wireguard":      func() interface{} { return &WireGuardConfig{IsClient: false} },
+		"hysteria":       func() interface{} { return new(HysteriaServerConfig) },
+		"nowhere":        func() interface{} { return new(NowhereServerConfig) },
+		"nowhere-egress": func() interface{} { return new(NowhereEgressConfig) },
+		"tun":            func() interface{} { return new(TunConfig) },
 	}, "protocol", "settings")
 
 	outboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{

@@ -34,9 +34,18 @@ type Client struct {
 	closed bool
 }
 
-func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
+// NewClient builds the Nowhere outbound. Version 3 endpoints are served by the
+// vendored Vector (ClientV3); every other version keeps the nw2 stack unchanged.
+func NewClient(ctx context.Context, config *ClientConfig) (interface{}, error) {
 	if config == nil || config.Endpoint == nil {
 		return nil, errors.New("nowhere: missing server")
+	}
+	version, err := resolveNowhereVersion(config.GetEndpoint().GetVersion())
+	if err != nil {
+		return nil, err
+	}
+	if version == nowhereVersion3 {
+		return NewClientV3(ctx, config)
 	}
 	if err := config.Endpoint.validate(); err != nil {
 		return nil, err

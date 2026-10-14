@@ -44,7 +44,16 @@ type Server struct {
 	closeErr  error
 }
 
-func NewServer(ctx context.Context, config *ServerConfig) (*Server, error) {
+// NewServer builds the Nowhere inbound. Version 3 endpoints are served by the
+// vendored Portal (ServerV3); every other version keeps the nw2 stack unchanged.
+func NewServer(ctx context.Context, config *ServerConfig) (interface{}, error) {
+	version, err := resolveNowhereVersion(config.GetVersion())
+	if err != nil {
+		return nil, err
+	}
+	if version == nowhereVersion3 {
+		return NewServerV3(ctx, config)
+	}
 	if config == nil || config.Password == "" {
 		return nil, errors.New("nowhere: missing password")
 	}
@@ -66,7 +75,7 @@ func NewServer(ctx context.Context, config *ServerConfig) (*Server, error) {
 	}
 	var morphKey []byte
 	var keys *morph.Keys
-	if config.Morph {
+	if config.GetMorph() {
 		derived := deriveMorph(config.Password)
 		keys = &derived
 		morphKey = []byte(config.Password)
