@@ -21,8 +21,8 @@ import (
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/proxy/dokodemo"
 	"github.com/xtls/xray-core/proxy/freedom"
-	"github.com/xtls/xray-core/proxy/nowhere/bundle"
-	"github.com/xtls/xray-core/proxy/nowhere/wire"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/bundle"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/wire"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/pipe"
 

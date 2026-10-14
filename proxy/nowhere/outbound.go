@@ -15,8 +15,8 @@ import (
 	"github.com/xtls/xray-core/common/task"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
-	"github.com/xtls/xray-core/proxy/nowhere/bundle"
-	"github.com/xtls/xray-core/proxy/nowhere/wire"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/bundle"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/wire"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 )

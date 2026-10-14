@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/apernet/quic-go"
-	nq "github.com/xtls/xray-core/proxy/nowhere/carrier/quic"
-	"github.com/xtls/xray-core/proxy/nowhere/carrier/quic/conformance"
-	"github.com/xtls/xray-core/proxy/nowhere/wire"
+	nq "github.com/xtls/xray-core/proxy/nowhere/core/nw2/carrier/quic"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/carrier/quic/conformance"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/wire"
 )
 
 // conformanceProbe marks DATAGRAM payloads the test peer must not echo, so

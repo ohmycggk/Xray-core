@@ -13,8 +13,8 @@ import (
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/features/routing"
-	"github.com/xtls/xray-core/proxy/nowhere/server"
-	"github.com/xtls/xray-core/proxy/nowhere/wire"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/server"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/wire"
 	"github.com/xtls/xray-core/transport"
 )
 

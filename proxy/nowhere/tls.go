@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/xtls/xray-core/common/errors"
-	"github.com/xtls/xray-core/proxy/nowhere/wire"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/wire"
 )
 
 func loadServerCertificates(list []*Certificate) ([]tls.Certificate, error) {

@@ -5,7 +5,7 @@ import (
 
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/proxy/nowhere"
-	"github.com/xtls/xray-core/proxy/nowhere/bundle"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/bundle"
 	"google.golang.org/protobuf/proto"
 )
 

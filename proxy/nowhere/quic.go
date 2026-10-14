@@ -10,11 +10,11 @@ import (
 
 	goerrors "errors"
 	"github.com/apernet/quic-go"
-	"github.com/xtls/xray-core/proxy/nowhere/carrier"
-	"github.com/xtls/xray-core/proxy/nowhere/carrier/morph"
-	nq "github.com/xtls/xray-core/proxy/nowhere/carrier/quic"
-	nwserver "github.com/xtls/xray-core/proxy/nowhere/server"
-	"github.com/xtls/xray-core/proxy/nowhere/wire"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/carrier"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/carrier/morph"
+	nq "github.com/xtls/xray-core/proxy/nowhere/core/nw2/carrier/quic"
+	nwserver "github.com/xtls/xray-core/proxy/nowhere/core/nw2/server"
+	"github.com/xtls/xray-core/proxy/nowhere/core/nw2/wire"
 
 	"github.com/xtls/xray-core/common/errors"
 	xnet "github.com/xtls/xray-core/common/net"
